@@ -128,6 +128,13 @@ private:
                                   capd::interval const & T,
                                   capd::IVector const & inv,
                                   vector<capd::IFunction> & funcs);
+    ODE_result simple_ODE_SpaceEx_forward(capd::IVector const & X_0,
+                                  capd::IVector & X_t,
+                                  capd::interval const & T,
+                                  capd::IVector const & inv,
+                                  vector<capd::IFunction> & funcs);
+    std::string getInvString(capd::IVector const & inv);
+    std::string getFlowString(vector<capd::IFunction> & funcs);
     ODE_result simple_ODE_backward(capd::IVector & X_0,
                                    capd::IVector const & X_t,
                                    capd::interval const & T,
