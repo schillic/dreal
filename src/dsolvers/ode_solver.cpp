@@ -1066,7 +1066,7 @@ ode_solver::ODE_result ode_solver::simple_ODE_SpaceEx_forward(IVector const & X_
     // debugging/workaround via system call/file access
     std::cout << std::endl << "---- new call ----" << std::endl;
     const bool DEBUG_USE_FILES = true;
-    const bool DEBUG_CALL_SPACEEX = false;
+    const bool DEBUG_CALL_SPACEEX = true;
     const bool DEBUG_READ_OUTPUT = true;
     
     const std::string SPACEEX_PATH = "/home/christian/programs/SpaceEx";
@@ -1075,21 +1075,10 @@ ode_solver::ODE_result ode_solver::simple_ODE_SpaceEx_forward(IVector const & X_
     const std::string OUTPUT_FILE_NAME = "myoutput.txt";
     const int NUM_VAR = X_0.dimension();
     
-    // string describing initial states
-    std::string initialString = "t == 0";
-    for (int i = 0; i < NUM_VAR; i++) {
-        const interval & x_0 = X_0[i];
-        initialString += " & " + to_string(x_0.leftBound()) + " <= x" + 
-                to_string(i) + " <= " + to_string(x_0.rightBound());
-    }
-    
-    // string describing invariant
-    const std::string invString = getInvString(inv) + " &amp; t &lt;= " +
-                                    to_string(T.rightBound() - T.leftBound()); // ASK: full time interval?
-    
-    // string describing flow
-    std::cout << to_string(T.rightBound() - T.leftBound()) << std::endl;
-    const std::string flowString = getFlowString(funcs) + " &amp; t' == 1";
+    // strings describing initial states, invariant, flow
+    const std::string initialString = getInitString(X_0);
+    const std::string invString = getInvString(inv, T);
+    const std::string flowString = getFlowString(funcs);
     
     if (DEBUG_USE_FILES) {
         // Christian: For the moment, write a SpaceEx model file
@@ -1114,7 +1103,7 @@ ode_solver::ODE_result ode_solver::simple_ODE_SpaceEx_forward(IVector const & X_
 
         // Christian: For the moment, write a SpaceEx config file
         out.open(CONFIG_FILE_NAME);
-        // TODO: Which parts are actually necessary?
+        // TODO Which parts are actually necessary?
         out << "system = system" << endl;
         out << "initially = " << initialString << endl;
         out << "scenario = phaver" << endl;
@@ -1135,7 +1124,8 @@ ode_solver::ODE_result ode_solver::simple_ODE_SpaceEx_forward(IVector const & X_
     // call SpaceEx
     if (DEBUG_CALL_SPACEEX) {
         std::string callString = SPACEEX_PATH + "/spaceex -m " + MODEL_FILE_NAME +
-                " -g " + CONFIG_FILE_NAME + " -o " + OUTPUT_FILE_NAME;
+                " -g " + CONFIG_FILE_NAME + " -o " + OUTPUT_FILE_NAME +
+                " > screen.txt";
         system(callString.c_str());
     }
     
@@ -1161,33 +1151,11 @@ ode_solver::ODE_result ode_solver::simple_ODE_SpaceEx_forward(IVector const & X_
                 ++comma;
                 std::string upper(line.substr(comma, end - comma));
                 
-                // imprecise interval representation
-                interval const spaceEx_x_t = interval(lower, upper);
+                interval const new_x_t =
+                            interval(std::stod(lower), std::stod(upper));
                 
-                // less imprecise interval representation
-                // ASK: precision problems?
-                double lowerD = std::stod(lower);
-                double upperD = std::stod(upper);
-                interval const spaceExD_x_t = interval(lowerD, upperD);
-                
-                std::cout << std::endl << line << std::endl;
-                std::cout << "X = x" << to_string(i) << std::endl;
-                std::cout << "lower = " << lower << std::endl;
-                std::cout << "upper = " << upper << std::endl;
-                
-                std::cout << "interval = " << spaceEx_x_t << std::endl;
-                std::cout << "interval = " <<
-                    to_string(spaceEx_x_t.leftBound()) << ", " <<
-                    to_string(spaceEx_x_t.rightBound()) << std::endl;
-                
-                std::cout << "intervalD = " << spaceExD_x_t << std::endl;
-                std::cout << "intervalD = " <<
-                    to_string(spaceExD_x_t.leftBound()) << ", " <<
-                    to_string(spaceExD_x_t.rightBound()) << std::endl;
-    
                 // intersection of old with new interval (only works variable-wise)
                 interval & x_t = X_t[i];
-                interval new_x_t = spaceExD_x_t;
                 std::cout << "intersection: " << new_x_t << " cap " << x_t << std::endl;
                 if (!intersection(new_x_t, x_t, x_t)) {
                     std::cout << "empty intersection" << std::endl;
@@ -1201,45 +1169,50 @@ ode_solver::ODE_result ode_solver::simple_ODE_SpaceEx_forward(IVector const & X_
         in.close();
     }
     
-    // TODO old
-    // X_t = X_t \cup (X_0 + (d/dt Inv) * T)
-    for (int i = 0; i < X_0.dimension(); i++) { // ASK: Why do we need the analysis for each variable?
-        interval const & x_0 = X_0[i];
-        interval & x_t = X_t[i];
-        IFunction & dxdt = funcs[i];
-        set_params(dxdt);
-        try {
-            interval new_x_t = x_0 + dxdt(inv) * T;
-            if (!intersection(new_x_t, x_t, x_t)) {
-                DREAL_LOG_INFO << "ode_solver::simple_ODE_SpaceEx_forward: no intersection for X_T => UNSAT";
-                return ODE_result::UNSAT;
-            }
-        } catch (exception& e) {
-            DREAL_LOG_ERROR << "ode_solver::simple_ODE_SpaceEx_forward: " << e.what();
-        }
-    }
     // update
     IVector_to_varlist(X_t, m_t_vars);
     return ODE_result::SAT;
 }
 
+/* Christian: new function for printing initial states string */
+std::string ode_solver::getInitString(IVector const & X_0) {
+    std::string initialString = "";
+    
+    // bounds for each variable
+    for (int i = 0; i < X_0.dimension(); i++) {
+        const interval & x_0 = X_0[i];
+        initialString += to_string(x_0.leftBound()) + " <= x" + 
+                to_string(i) + " <= " + to_string(x_0.rightBound()) + " & ";
+    }
+    
+    // add initial time point
+    initialString += "t == 0";
+    
+    return initialString;
+}
+
 /* Christian: new function for printing invariant string */
-std::string ode_solver::getInvString(IVector const & inv) {
+std::string ode_solver::getInvString(IVector const & inv, interval const & T) {
     std::string invString = "";
+    
+    // bounds for each variable
     for (int i = 0; i < inv.size(); i++) {
         interval const & x = inv[i];
-        if (i > 0) {
-            invString += " &amp; ";
-        }
         invString += to_string(x.leftBound()) + " &lt;= x" + to_string(i) +
-                    " &lt;= " + to_string(x.rightBound());
+                    " &lt;= " + to_string(x.rightBound()) + " &amp; ";
     }
+    
+    // add time bound
+    // TODO more general solution?
+    invString += "t &lt;= " + to_string(T.rightBound() - T.leftBound());
     
     return invString;
 }
 
 /* Christian: new function for printing flow string */
 std::string ode_solver::getFlowString(vector<IFunction> & funcs) {
+    std::string flowString = "";
+    
     // TODO just trying to figure out how Function works
 //     for (uint i = 0; i < funcs.size(); i++) {
 //         IFunction & dxdt = funcs[i];
@@ -1250,7 +1223,12 @@ std::string ode_solver::getFlowString(vector<IFunction> & funcs) {
 //     }
     
     // TODO currently returns a constant string
-    return "x1' == x0 &amp; x0' == -9.8";
+    flowString = "x1' == x0 &amp; x0' == -9.8";
+    
+    // add time dynamics
+    flowString += " &amp; t' == 1";
+    
+    return flowString;
 }
 
 ode_solver::ODE_result ode_solver::simple_ODE_backward(IVector & X_0, IVector const & X_t, interval const & T,
