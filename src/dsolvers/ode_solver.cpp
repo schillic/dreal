@@ -1090,7 +1090,7 @@ ode_solver::ODE_result ode_solver::simple_ODE_SpaceEx_forward(IVector const & X_
     
     // strings describing initial states, invariant, flow
     string const initialString = getInitString(X_0, T, index2varName, TIME_VAR);
-    string const invString = getInvString(inv, T, index2varName, TIME_VAR);
+    string const invString = getInvString(inv, NUM_VAR, T, index2varName, TIME_VAR);
     string const flowString = getFlowString(flow_map, m_int->getCdr()->getCdr()->getCdr()->getCdr(), index2varName, TIME_VAR);
     
     // Christian: For the moment, write a SpaceEx model file
@@ -1200,11 +1200,11 @@ string ode_solver::getInitString(IVector const & X_0, interval const & T, string
 }
 
 /* Christian: new function for printing invariant string */
-string ode_solver::getInvString(IVector const & inv, interval const & T, string * const index2varName, string const TIME_VAR) {
+string ode_solver::getInvString(IVector const & inv, int const NUM_VAR, interval const & T, string * const index2varName, string const TIME_VAR) {
     string invString = "";
     
     // bounds for each variable
-    for (int i = 0; i < inv.size(); i++) {
+    for (int i = 0; i < NUM_VAR; i++) {
         interval const & x = inv[i];
         invString += to_string(x.leftBound()) + " &lt;= " + index2varName[i] +
                     " &lt;= " + to_string(x.rightBound()) + " &amp; ";
