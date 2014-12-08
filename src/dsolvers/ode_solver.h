@@ -133,7 +133,7 @@ private:
                                   capd::interval const & T,
                                   capd::IVector const & inv);
     std::string getInitString(capd::IVector const & X_0, capd::interval const & T, string * const index2varName, string const TIME_VAR);
-    std::string getInvString(capd::IVector const & inv, int const NUM_VAR, capd::interval const & T, string * const index2varName, string const TIME_VAR);
+    std::string getInvString(capd::IVector const & inv, capd::interval const & T, string * const index2varName, string const TIME_VAR);
     std::string getFlowString(std::unordered_map<string, Enode *> & flow_map, Enode * var_list, string * const index2varName, string const TIME_VAR);
     std::string getVarName(Enode * var_list);
     ODE_result simple_ODE_backward(capd::IVector & X_0,
