@@ -65,6 +65,9 @@ namespace dreal {
 static unsigned g_hit = 0;
 static unsigned g_nohit = 0;
 
+// TODO only for debugging purposes
+static int g_SpaceExCalls = 0;
+
 list<interval> split(interval const & i, unsigned n) {
     list<interval> ret;
     double lb = i.leftBound();
@@ -503,7 +506,7 @@ ode_solver::ODE_result ode_solver::simple_ODE(rp_box b, bool forward) {
     if (forward) {
 	// Christian: use new function
 //         ret = simple_ODE_forward(m_X_0, m_X_t, m_T, m_inv, m_funcs);
-	ret = simple_ODE_SpaceEx_forward(m_X_0, m_X_t, m_T, m_inv, m_funcs);
+	ret = simple_ODE_SpaceEx_forward(m_X_0, m_X_t, m_T, m_inv);
     } else {
         ret = simple_ODE_backward(m_X_0, m_X_t, m_T, m_inv, m_funcs);
     }
@@ -517,7 +520,7 @@ ode_solver::ODE_result ode_solver::simple_ODE(rp_box b, bool forward) {
     } else {
 	// Christian: use new function
 //         return simple_ODE_forward(m_X_0, m_X_t, m_T, m_inv, m_funcs);
-	return simple_ODE_SpaceEx_forward(m_X_0, m_X_t, m_T, m_inv, m_funcs);
+	return simple_ODE_SpaceEx_forward(m_X_0, m_X_t, m_T, m_inv);
     }
 }
 
@@ -1058,118 +1061,129 @@ ode_solver::ODE_result ode_solver::simple_ODE_forward(IVector const & X_0, IVect
 }
 
 /* Christian: new SpaceEx function */
-ode_solver::ODE_result ode_solver::simple_ODE_SpaceEx_forward(IVector const & X_0, IVector & X_t, interval const & T,
-                                                                IVector const & inv, vector<IFunction> & funcs) {
-    bool prune_params_result = prune_params();
+ode_solver::ODE_result ode_solver::simple_ODE_SpaceEx_forward(IVector const & X_0, IVector & X_t,
+                                                              interval const & T, IVector const & inv) {
+    bool const prune_params_result = prune_params();
     if (!prune_params_result) {
         return ODE_result::UNSAT;
     }
     
-    // debugging/workaround via system call/file access
+    // TODO debugging: additional counter to write new files for each call
     std::cout << std::endl << "---- new call ----" << std::endl;
-    const bool DEBUG_USE_FILES = true;
-    const bool DEBUG_CALL_SPACEEX = true;
-    const bool DEBUG_READ_OUTPUT = true;
+    string const numberString = to_string(++g_SpaceExCalls);
     
-    const std::string SPACEEX_PATH = "/home/christian/programs/SpaceEx";
-    const std::string MODEL_FILE_NAME = "mymodel.xml";
-    const std::string CONFIG_FILE_NAME = "myconfig.cfg";
-    const std::string OUTPUT_FILE_NAME = "myoutput.txt";
-    const int NUM_VAR = X_0.dimension();
+    string const SPACEEX_PATH = "/home/christian/programs/SpaceEx"; // TODO not general
+    string const MODEL_FILE_NAME = "mymodel" + numberString + ".xml";
+    string const CONFIG_FILE_NAME = "myconfig" + numberString + ".cfg";
+    string const OUTPUT_FILE_NAME = "myoutput" + numberString + ".txt";
+    int const NUM_VAR = X_0.dimension();
+    string const TIME_VAR = "time"; // TODO fresh variable?
+    
+    // mapping from variable name to ODE
+    string const flow_step = (m_egraph.stepped_flows ? to_string(m_step) + "_" : "");
+    unordered_map<string, Enode *> & flow_map = m_egraph.flow_maps[string("flow_") + flow_step + to_string(m_mode)];
+    
+    // mapping from variable index to name
+    string * const index2varName = new string[NUM_VAR];
+    Enode * var_list = m_int->getCdr()->getCdr()->getCdr()->getCdr();
+    int index = 0;
+    while (!var_list->isEnil()) {
+        string const name = getVarName(var_list);
+        index2varName[index] = name;
+        
+        // continue in list
+        var_list = var_list->getCdr()->getCdr();
+        ++index;
+    }
     
     // strings describing initial states, invariant, flow
-    const std::string initialString = getInitString(X_0);
-    const std::string invString = getInvString(inv, T);
-    const std::string flowString = getFlowString(funcs);
+    string const initialString = getInitString(X_0, T, index2varName, TIME_VAR);
+    string const invString = getInvString(inv, T, index2varName, TIME_VAR);
+    string const flowString = getFlowString(flow_map, m_int->getCdr()->getCdr()->getCdr()->getCdr(), index2varName, TIME_VAR);
     
-    if (DEBUG_USE_FILES) {
-        // Christian: For the moment, write a SpaceEx model file
-        std::ofstream out(MODEL_FILE_NAME);
-
-        out << "<?xml version=\"1.0\" encoding=\"utf-8\"?>" << endl;
-        out << "<sspaceex xmlns=\"http://www-verimag.imag.fr/xml-namespaces/sspaceex\" version=\"0.2\" math=\"SpaceEx\">" << endl;
-        out << "  <component id=\"system\">" << endl;
-        out << "    <param name=\"t\" type=\"real\" local=\"true\" d1=\"1\" d2=\"1\" dynamics=\"any\" />\"" << endl;
-        for (int j = 0; j < NUM_VAR; ++j) {
-                out << "    <param name=\"x" << to_string(j) <<
-                        "\" type=\"real\" local=\"true\" d1=\"1\" d2=\"1\" dynamics=\"any\" />\"" << endl;
-        }
-        out << "    <location id=\"1\" name=\"loc1\" x=\"300.0\" y=\"300.0\" width=\"300.0\" height=\"300.0\">" << endl;
-        out << "      <invariant>" << invString << "</invariant>" << endl;
-        out << "      <flow>" << flowString << "</flow>" << endl;
-        out << "    </location>" << endl;
-        out << "  </component>" << endl;
-        out << "</sspaceex>" << endl;
-        out.close();
-        // end of SpaceEx model file
-
-        // Christian: For the moment, write a SpaceEx config file
-        out.open(CONFIG_FILE_NAME);
-        // TODO Which parts are actually necessary?
-        out << "system = system" << endl;
-        out << "initially = " << initialString << endl;
-        out << "scenario = phaver" << endl;
-        out << "directions = box" << endl;
-        out << "iter-max = 1" << endl;
-        out << "output-format = INTV" << endl;
-        out << "set-aggregation = chull" << endl;
-        out << "sampling-time = 0.001" << endl;
-        out << "time-horizon = 25" << endl;
-        out << "output-variables = \"x0, x1\"" << endl;
-        out << "rel-err = 1.0E-12" << endl;
-        out << "abs-err = 1.0E-13" << endl;
-        out << "flowpipe-tolerance = 0.001" << endl;
-        out.close();
-        // end of SpaceEx config file
+    // Christian: For the moment, write a SpaceEx model file
+    std::ofstream out(MODEL_FILE_NAME);
+    out << "<?xml version=\"1.0\" encoding=\"utf-8\"?>" << endl <<
+        "<sspaceex xmlns=\"http://www-verimag.imag.fr/xml-namespaces/sspaceex\" version=\"0.2\" math=\"SpaceEx\">" << endl <<
+        "  <component id=\"system\">" << endl;
+    for (int i = 0; i < NUM_VAR; ++i) {
+        out << "    <param name=\"" << index2varName[i] <<
+                "\" type=\"real\" local=\"true\" d1=\"1\" d2=\"1\" dynamics=\"any\" />\"" << endl;
     }
+    out << "    <param name=\"" << TIME_VAR <<
+            "\" type=\"real\" local=\"true\" d1=\"1\" d2=\"1\" dynamics=\"any\" />\"" << endl <<
+        "    <location id=\"1\" name=\"loc1\" x=\"300.0\" y=\"300.0\" width=\"300.0\" height=\"300.0\">" << endl <<
+        "      <invariant>" << invString << "</invariant>" << endl <<
+        "      <flow>" << flowString << "</flow>" << endl <<
+        "    </location>" << endl <<
+        "  </component>" << endl <<
+        "</sspaceex>" << endl;
+    out.close();
+    // end of SpaceEx model file
+
+    // Christian: For the moment, write a SpaceEx config file
+    out.open(CONFIG_FILE_NAME);
+    // TODO Which parts are actually necessary?
+    out << "system = system" << endl <<
+        "initially = " << initialString << endl <<
+        "scenario = phaver" << endl <<
+        "directions = box" << endl <<
+        "iter-max = 1" << endl <<
+        "output-format = INTV" << endl;
+    
+    out << "output-variables = \"";
+    for (int i = 0; i < NUM_VAR - 1; ++i) {
+        out << index2varName[i] << ",";
+    }
+    out << index2varName[NUM_VAR - 1] << "\"" << endl;
+    
+    out.close();
+    // end of SpaceEx config file
     
     // call SpaceEx
-    if (DEBUG_CALL_SPACEEX) {
-        std::string callString = SPACEEX_PATH + "/spaceex -m " + MODEL_FILE_NAME +
-                " -g " + CONFIG_FILE_NAME + " -o " + OUTPUT_FILE_NAME +
-                " > screen.txt";
-        system(callString.c_str());
-    }
+    string callString = SPACEEX_PATH + "/spaceex -m " + MODEL_FILE_NAME +
+                        " -g " + CONFIG_FILE_NAME + " -o " + OUTPUT_FILE_NAME +
+                        " > screen" + numberString + ".txt";
+    system(callString.c_str());
     
     // open and parse output file
-    if (DEBUG_READ_OUTPUT) {
-        std::ifstream in(OUTPUT_FILE_NAME);
-        std::string line;
-        int i = -2;
-        while (getline (in, line))
-        {
-            if (i >= 0) {
-                if (i == NUM_VAR) {
-                    break;
-                }
-                
-                // one iteration per variable; current = xi
-                
-                // split interval string
-                const int start = line.find('[', 11) + 1;
-                int comma = line.find(',', start + 2);
-                const int end = line.find(']', comma + 2);
-                std::string lower(line.substr(start, comma - start));
-                ++comma;
-                std::string upper(line.substr(comma, end - comma));
-                
-                interval const new_x_t =
-                            interval(std::stod(lower), std::stod(upper));
-                
-                // intersection of old with new interval (only works variable-wise)
-                interval & x_t = X_t[i];
-                std::cout << "intersection: " << new_x_t << " cap " << x_t << std::endl;
-                if (!intersection(new_x_t, x_t, x_t)) {
-                    std::cout << "empty intersection" << std::endl;
-                    DREAL_LOG_INFO << "ode_solver::simple_ODE_SpaceEx_forward: no intersection for X_T => UNSAT";
-                    return ODE_result::UNSAT;
-                }
-                std::cout << "intersection is " << x_t << std::endl;
-            }
-            ++i;
+    std::ifstream in(OUTPUT_FILE_NAME);
+    string line;
+    int i = -3;
+    while (getline (in, line)) {
+        ++i;
+        if (i < 0) {
+            continue;
         }
-        in.close();
+        
+        if (i == NUM_VAR) {
+            break;
+        }
+        
+        // one iteration per variable; current = xi
+        
+        // split interval string
+        int const start = line.find('[', 10) + 1;
+        int comma = line.find(',', start + 1);
+        int const end = line.find(']', comma + 2);
+        string lower(line.substr(start, comma - start));
+        ++comma;
+        string upper(line.substr(comma, end - comma));
+        
+        interval const new_x_t =
+                    interval(std::stod(lower), std::stod(upper));
+        
+        // intersection of old with new interval (variable-wise)
+        interval & x_t = X_t[i];
+        std::cout << "intersect: " << new_x_t << " cap " << x_t;
+        if (!intersection(new_x_t, x_t, x_t)) {
+            std::cout << " == empty intersection" << std::endl;
+            DREAL_LOG_INFO << "ode_solver::simple_ODE_SpaceEx_forward: no intersection for X_T => UNSAT";
+            return ODE_result::UNSAT;
+        }
+        std::cout << " == " << x_t << std::endl;
     }
+    in.close();
     
     // update
     IVector_to_varlist(X_t, m_t_vars);
@@ -1177,60 +1191,77 @@ ode_solver::ODE_result ode_solver::simple_ODE_SpaceEx_forward(IVector const & X_
 }
 
 /* Christian: new function for printing initial states string */
-std::string ode_solver::getInitString(IVector const & X_0) {
-    std::string initialString = "";
+string ode_solver::getInitString(IVector const & X_0, interval const & T, string * const index2varName, string const TIME_VAR) {
+    string initialString = "";
     
     // bounds for each variable
     for (int i = 0; i < X_0.dimension(); i++) {
-        const interval & x_0 = X_0[i];
-        initialString += to_string(x_0.leftBound()) + " <= x" + 
-                to_string(i) + " <= " + to_string(x_0.rightBound()) + " & ";
+        interval const & x_0 = X_0[i];
+        initialString += to_string(x_0.leftBound()) + " <= " + 
+                index2varName[i] + " <= " + to_string(x_0.rightBound()) + " & ";
     }
     
     // add initial time point
-    initialString += "t == 0";
+    initialString += TIME_VAR + " == " + to_string(T.leftBound());
     
     return initialString;
 }
 
 /* Christian: new function for printing invariant string */
-std::string ode_solver::getInvString(IVector const & inv, interval const & T) {
-    std::string invString = "";
+string ode_solver::getInvString(IVector const & inv, interval const & T, string * const index2varName, string const TIME_VAR) {
+    string invString = "";
     
     // bounds for each variable
     for (int i = 0; i < inv.size(); i++) {
         interval const & x = inv[i];
-        invString += to_string(x.leftBound()) + " &lt;= x" + to_string(i) +
+        invString += to_string(x.leftBound()) + " &lt;= " + index2varName[i] +
                     " &lt;= " + to_string(x.rightBound()) + " &amp; ";
     }
     
     // add time bound
-    // TODO more general solution?
-    invString += "t &lt;= " + to_string(T.rightBound() - T.leftBound());
+    invString += TIME_VAR + " &lt;= " + to_string(T.rightBound());
     
     return invString;
 }
 
 /* Christian: new function for printing flow string */
-std::string ode_solver::getFlowString(vector<IFunction> & funcs) {
-    std::string flowString = "";
+string ode_solver::getFlowString(unordered_map<string, Enode *> & flow_map, Enode * var_list, string * const index2varName, string const TIME_VAR) {
+    string flowString = "";
     
-    // TODO just trying to figure out how Function works
-//     for (uint i = 0; i < funcs.size(); i++) {
-//         IFunction & dxdt = funcs[i];
-//         std::cout << "dxdt F = " << dxdt.formula() << std::endl;
-//         std::cout << "dxdt PD = " << dxdt.partialDerivative(0) << std::endl;
-//         std::cout << "dxdt OP = " << dxdt[0] << std::endl;
-//         std::cout << "dxdt GR = " << dxdt.gradient(2) << std::endl;
-//     }
+    // get flow for each variable
+    int i = 0;
+    while (!var_list->isEnil()) {
+        string name = index2varName[i];
+        stringstream ss;
+        Enode * const func = flow_map[name];
+        func->print_infix(ss, true, "");
+        
+        // add next flow conjunct
+        flowString += name + "' == " + ss.str() + " &amp; ";
+        
+        // continue in list
+        var_list = var_list->getCdr()->getCdr();
+        ++i;
+    }
     
-    // TODO currently returns a constant string
-    flowString = "x1' == x0 &amp; x0' == -9.8";
-    
-    // add time dynamics
-    flowString += " &amp; t' == 1";
+    // add time flow
+    flowString += TIME_VAR + "' == 1";
     
     return flowString;
+}
+
+/* Christian: new function for extracting the variable name */
+string ode_solver::getVarName(Enode * var_list) {
+    string name = var_list->getCar()->getCar()->getName();
+    size_t second_ = name.find_last_of("_");
+    size_t first_ = name.find_last_of("_", second_ - 1);
+    string name_prefix;
+    if (first_ == string::npos) {
+        name_prefix = name.substr(0, second_);
+    } else {
+        name_prefix = name.substr(0, first_);
+    }
+    return name_prefix;
 }
 
 ode_solver::ODE_result ode_solver::simple_ODE_backward(IVector & X_0, IVector const & X_t, interval const & T,
