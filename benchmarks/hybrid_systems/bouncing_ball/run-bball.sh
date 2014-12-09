@@ -1,0 +1,15 @@
+CMD="-m bball.xml --config bball.cfg --output-file plots/bball-plot.txt -v D7"
+#CMD="-m timer-abstract.xml --config timer.cfg --output-file=out.txt -v=D7"
+#CMD="--m timer.xml --config timer.cfg --output-file=out.txt"
+# output projection on x,t
+# eval memtime sspaceex $CMD -f GEN -o out.txt -a x[-1,8],t[2,3]
+sspaceex $CMD  > bball-screen.txt		
+
+graph -TX -BC -q 0.5 plots/bball-plot.txt
+graph -T "ps" -BC -q 0.5 plots/bball-plot.txt > plots/bball-plot.ps
+ps2eps -l -B -s b0 -c -n -f plots/bball-plot.ps
+ps2pdf -dEPSCrop plots/bball-plot.ps
+
+
+# output jvx
+# eval memtime sspaceex $CMD -f JVX -o out.jvx

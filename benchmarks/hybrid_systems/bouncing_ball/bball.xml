@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="iso-8859-1"?>
+<sspaceex xmlns="http://www-verimag.imag.fr/xml-namespaces/sspaceex" version="0.2" math="SpaceEx">
+  <component id="system">
+    <param name="x" type="real" local="false" d1="1" d2="1" dynamics="any" />
+    <param name="v" type="real" local="false" d1="1" d2="1" dynamics="any" />
+    <param name="g" type="real" local="false" d1="1" d2="1" dynamics="const" />
+    <param name="t" type="real" local="false" d1="1" d2="1" dynamics="any" />
+    <location id="1" name="loc1" x="223.0" y="231.0" width="158.0" height="150.0">
+      <invariant>v &lt;= 0 &amp;&amp;
+x &gt;= 0</invariant>
+      <flow>x'==v &amp;&amp;
+v'==g &amp;&amp;
+t'==1</flow>
+    </location>
+    <location id="2" name="loc2" x="545.0" y="226.0" width="170.0" height="146.0">
+      <invariant>v &gt;= 0 &amp;&amp;
+x &gt;= 0</invariant>
+      <flow>x'==v &amp;&amp;
+v'==g &amp;&amp;
+t'==1</flow>
+    </location>
+    <transition source="1" target="2" bezier="true">
+      <guard>x == 0</guard>
+      <assignment>v := -v</assignment>
+      <labelposition x="-17.0" y="-60.0" />
+      <middlepoint x="377.0" y="168.5" />
+    </transition>
+    <transition source="2" target="1" bezier="true">
+      <guard>v == 0</guard>
+      <labelposition x="-23.0" y="26.0" width="82.0" height="56.0" />
+      <middlepoint x="373.0" y="282.5" />
+    </transition>
+  </component>
+</sspaceex>
+
