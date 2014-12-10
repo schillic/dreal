@@ -1069,7 +1069,14 @@ ode_solver::ODE_result ode_solver::simple_ODE_SpaceEx_forward(IVector const & X_
     string const CONFIG_FILE_NAME = "myconfig" + numberString + ".cfg";
     string const OUTPUT_FILE_NAME = "myoutput" + numberString + ".txt";
     int const NUM_VAR = X_0.dimension();
-    string const TIME_VAR = "time"; // TODO fresh variable?
+    
+    /* 
+     * Name of a new time variable for plotting
+     * Can be set to empty string for deactivation
+     * TODO debugging
+     */
+    bool const ADD_TIME_VARIABLE = false;
+    string const TIME_VAR = ADD_TIME_VARIABLE ? m_time->getCar()->getName() : "";
     
     // mapping from variable name to ODE
     string const flow_step = (m_egraph.stepped_flows ? to_string(m_step) + "_" : "");
@@ -1102,9 +1109,11 @@ ode_solver::ODE_result ode_solver::simple_ODE_SpaceEx_forward(IVector const & X_
         out << "    <param name=\"" << index2varName[i] <<
                 "\" type=\"real\" local=\"true\" d1=\"1\" d2=\"1\" dynamics=\"any\" />\"" << endl;
     }
-    out << "    <param name=\"" << TIME_VAR <<
-            "\" type=\"real\" local=\"true\" d1=\"1\" d2=\"1\" dynamics=\"any\" />\"" << endl <<
-        "    <location id=\"1\" name=\"loc1\" x=\"300.0\" y=\"300.0\" width=\"300.0\" height=\"300.0\">" << endl <<
+    if (TIME_VAR.length() > 0) {
+        out << "    <param name=\"" << TIME_VAR <<
+                "\" type=\"real\" local=\"true\" d1=\"1\" d2=\"1\" dynamics=\"any\" />\"" << endl;
+    }
+        out << "    <location id=\"1\" name=\"loc1\" x=\"300.0\" y=\"300.0\" width=\"300.0\" height=\"300.0\">" << endl <<
         "      <invariant>" << invString << "</invariant>" << endl <<
         "      <flow>" << flowString << "</flow>" << endl <<
         "    </location>" << endl <<
@@ -1118,9 +1127,10 @@ ode_solver::ODE_result ode_solver::simple_ODE_SpaceEx_forward(IVector const & X_
     // TODO Which parts are actually necessary?
     out << "system = system" << endl <<
         "initially = " << initialString << endl <<
-        "scenario = phaver" << endl <<
+        "scenario = stc" << endl <<
         "directions = box" << endl <<
         "iter-max = 1" << endl <<
+        "time-horizon = " << to_string(T.rightBound() - T.leftBound()) << endl <<
         "output-format = INTV" << endl;
     
     out << "output-variables = \"";
@@ -1183,42 +1193,52 @@ ode_solver::ODE_result ode_solver::simple_ODE_SpaceEx_forward(IVector const & X_
 }
 
 /* Christian: new function for printing initial states string */
-string ode_solver::getInitString(IVector const & X_0, interval const & T, string * const index2varName, string const TIME_VAR) {
-    string initialString = "";
+string ode_solver::getInitString(IVector const & X_0, interval const & T, string * const index2varName, string const timeString) {
+    string str = "";
     
     // bounds for each variable
     for (int i = 0; i < X_0.dimension(); i++) {
         interval const & x_0 = X_0[i];
-        initialString += to_string(x_0.leftBound()) + " <= " + 
-                index2varName[i] + " <= " + to_string(x_0.rightBound()) + " & ";
+        if (i > 0) {
+             str += " & ";
+        }
+        str += to_string(x_0.leftBound()) + " <= " + 
+                index2varName[i] + " <= " + to_string(x_0.rightBound());
     }
     
     // add initial time point
-    initialString += TIME_VAR + " == " + to_string(T.leftBound());
+    if (timeString.length() > 0) {
+        str += " & " + timeString + " == " + to_string(T.leftBound());
+    }
     
-    return initialString;
+    return str;
 }
 
 /* Christian: new function for printing invariant string */
-string ode_solver::getInvString(IVector const & inv, interval const & T, string * const index2varName, string const TIME_VAR) {
-    string invString = "";
+string ode_solver::getInvString(IVector const & inv, interval const & T, string * const index2varName, string const timeString) {
+    string str = "";
     
     // bounds for each variable
     for (int i = 0; i < inv.dimension(); i++) {
         interval const & x = inv[i];
-        invString += to_string(x.leftBound()) + " &lt;= " + index2varName[i] +
-                    " &lt;= " + to_string(x.rightBound()) + " &amp; ";
+        if (i > 0) {
+             str += " &amp; ";
+        }
+        str += to_string(x.leftBound()) + " &lt;= " + index2varName[i] +
+                    " &lt;= " + to_string(x.rightBound());
     }
     
     // add time bound
-    invString += TIME_VAR + " &lt;= " + to_string(T.rightBound());
+    if (timeString.length() > 0) {
+        str += " &amp; " + timeString + " &lt;= " + to_string(T.rightBound());
+    }
     
-    return invString;
+    return str;
 }
 
 /* Christian: new function for printing flow string */
-string ode_solver::getFlowString(unordered_map<string, Enode *> & flow_map, Enode * var_list, string * const index2varName, string const TIME_VAR) {
-    string flowString = "";
+string ode_solver::getFlowString(unordered_map<string, Enode *> & flow_map, Enode * var_list, string * const index2varName, string const timeString) {
+    string str = "";
     
     // get flow for each variable
     int i = 0;
@@ -1229,7 +1249,10 @@ string ode_solver::getFlowString(unordered_map<string, Enode *> & flow_map, Enod
         func->print_infix(ss, true, "");
         
         // add next flow conjunct
-        flowString += name + "' == " + ss.str() + " &amp; ";
+        if (i > 0) {
+             str += " &amp; ";
+        }
+        str += name + "' == " + ss.str();
         
         // continue in list
         var_list = var_list->getCdr()->getCdr();
@@ -1237,9 +1260,11 @@ string ode_solver::getFlowString(unordered_map<string, Enode *> & flow_map, Enod
     }
     
     // add time flow
-    flowString += TIME_VAR + "' == 1";
+    if (timeString.length() > 0) {
+        str += " &amp; " + timeString + "' == 1";
+    }
     
-    return flowString;
+    return str;
 }
 
 /* Christian: new function for extracting the variable name */
