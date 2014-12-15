@@ -494,15 +494,20 @@ void ode_solver::IVector_to_varlist(IVector const & v, vector<Enode*> & vars) {
 ode_solver::ODE_result ode_solver::simple_ODE(rp_box b, bool forward) {
     update(b);
     ODE_result ret = ODE_result::SAT;
+    
+    bool const USE_SPACEEX = true;
 
     if (forward) {
 	// Christian: use new function
-//         ret = simple_ODE_forward(m_X_0, m_X_t, m_T, m_inv, m_funcs);
-	ret = simple_ODE_SpaceEx_forward(m_X_0, m_X_t, m_T, m_inv);
+        if (USE_SPACEEX) {
+            ret = simple_ODE_SpaceEx_forward(m_X_0, m_X_t, m_T, m_inv);
+        } else {
+            ret = simple_ODE_forward(m_X_0, m_X_t, m_T, m_inv, m_funcs);
+        }
     } else {
         ret = simple_ODE_backward(m_X_0, m_X_t, m_T, m_inv, m_funcs);
     }
-
+    
     if (ret == ODE_result::UNSAT) {
         return ret;
     }
@@ -511,8 +516,11 @@ ode_solver::ODE_result ode_solver::simple_ODE(rp_box b, bool forward) {
         return simple_ODE_backward(m_X_0, m_X_t, m_T, m_inv, m_funcs);
     } else {
 	// Christian: use new function
-//         return simple_ODE_forward(m_X_0, m_X_t, m_T, m_inv, m_funcs);
-	return simple_ODE_SpaceEx_forward(m_X_0, m_X_t, m_T, m_inv);
+        if (USE_SPACEEX) {
+            return simple_ODE_SpaceEx_forward(m_X_0, m_X_t, m_T, m_inv);
+        } else {
+            return simple_ODE_forward(m_X_0, m_X_t, m_T, m_inv, m_funcs);
+        }
     }
 }
 
@@ -1061,7 +1069,6 @@ ode_solver::ODE_result ode_solver::simple_ODE_SpaceEx_forward(IVector const & X_
     }
     
     // TODO debugging: additional counter to write new files for each call
-    std::cout << std::endl << "---- new call ----" << std::endl;
     string const numberString = to_string(++g_SpaceExCalls);
     
     string const SPACEEX_PATH = "/home/christian/programs/SpaceEx"; // TODO not general
@@ -1130,7 +1137,7 @@ ode_solver::ODE_result ode_solver::simple_ODE_SpaceEx_forward(IVector const & X_
         "scenario = stc" << endl <<
         "directions = box" << endl <<
         "iter-max = 1" << endl <<
-        "time-horizon = " << to_string(T.rightBound() - T.leftBound()) << endl <<
+        "time-horizon = " << to_string(T.rightBound()) << endl <<
         "output-format = INTV" << endl;
     
     out << "output-variables = \"";
@@ -1177,13 +1184,10 @@ ode_solver::ODE_result ode_solver::simple_ODE_SpaceEx_forward(IVector const & X_
         
         // intersection of old with new interval (variable-wise)
         interval & x_t = X_t[i];
-        std::cout << "intersect: " << new_x_t << " cap " << x_t;
         if (!intersection(new_x_t, x_t, x_t)) {
-            std::cout << " == empty intersection" << std::endl;
             DREAL_LOG_INFO << "ode_solver::simple_ODE_SpaceEx_forward: no intersection for X_T => UNSAT";
             return ODE_result::UNSAT;
         }
-        std::cout << " == " << x_t << std::endl;
     }
     in.close();
     
@@ -1208,7 +1212,11 @@ string ode_solver::getInitString(IVector const & X_0, interval const & T, string
     
     // add initial time point
     if (timeString.length() > 0) {
-        str += " & " + timeString + " == " + to_string(T.leftBound());
+        /*
+         * TODO We are actually interested in the reachable states in time
+         * interval [l, r] instead of [0, r].
+         */
+        str += " & " + timeString + " == 0";// + to_string(T.leftBound());
     }
     
     return str;
