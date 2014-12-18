@@ -1076,6 +1076,7 @@ ode_solver::ODE_result ode_solver::simple_ODE_SpaceEx_forward(IVector const & X_
 //     std::cerr << X_0 << ", " << X_t << ", " << T << std::endl;
     ode_solver::ODE_result res = simple_ODE_SpaceEx_general(X_0, X_t, T, inv, true);
 //     std::cerr << X_0 << ", " << X_t << ", " << T << std::endl;
+//     std::cerr << "res = " << res << std::endl;
     return res;
 }
 
@@ -1091,6 +1092,7 @@ ode_solver::ODE_result ode_solver::simple_ODE_SpaceEx_backward(IVector & X_0, IV
 //     std::cerr << X_0 << ", " << X_t << ", " << T << std::endl;
     ode_solver::ODE_result res = simple_ODE_SpaceEx_general(X_t, X_0, T, inv, false);
 //     std::cerr << X_0 << ", " << X_t << ", " << T << std::endl;
+//     std::cerr << "res = " << res << std::endl;
     return res;
 }
 
@@ -1106,9 +1108,11 @@ ode_solver::ODE_result ode_solver::simple_ODE_SpaceEx_general(IVector const & X_
     // TODO(christian) debugging: additional counter to write new files for each call
     string const numberString = to_string(++g_SpaceExCalls);
     
-    string const MODEL_FILE_NAME = "mymodel" + numberString + ".xml";
-    string const CONFIG_FILE_NAME = "myconfig" + numberString + ".cfg";
-    string const OUTPUT_FILE_NAME = "myoutput" + numberString + ".txt";
+    string const FILES_PATH = "spaceex/";
+    string const MODEL_FILE_NAME = FILES_PATH + "model" + numberString + ".xml";
+    string const CONFIG_FILE_NAME = FILES_PATH + "config" + numberString + ".cfg";
+    string const OUTPUT_FILE_NAME = FILES_PATH + "output" + numberString + ".txt";
+    string const SCREEN_FILE_NAME = FILES_PATH + "screen" + numberString + ".txt";
     int const NUM_VAR = X_0.dimension();
     string const TIME_VAR = m_time->getCar()->getName();
     
@@ -1134,10 +1138,12 @@ ode_solver::ODE_result ode_solver::simple_ODE_SpaceEx_general(IVector const & X_
     string const invString = getInvString(inv, T, index2varName, TIME_VAR);
     string const flowString = getFlowString(flow_map, m_int->getCdr()->getCdr()->getCdr()->getCdr(),
                                             index2varName, TIME_VAR, forward);
+    string const forbiddenString = getForbiddenString(T, TIME_VAR);
     
 //     std::cerr << "init: " << initialString << std::endl;
 //     std::cerr << "inv: " << invString << std::endl;
 //     std::cerr << "flow: " << flowString << std::endl;
+//     std::cerr << "forbidden: " << forbiddenString << std::endl;
     
     // Christian: For the moment, write a SpaceEx model file
     std::ofstream out(MODEL_FILE_NAME);
@@ -1165,6 +1171,7 @@ ode_solver::ODE_result ode_solver::simple_ODE_SpaceEx_general(IVector const & X_
     out.open(CONFIG_FILE_NAME);
     out << "system = system" << endl <<
         "initially = " << initialString << endl <<
+        "forbidden = " << forbiddenString << endl <<
         "scenario = stc" << endl <<
         "directions = box" << endl <<
         "iter-max = 1" << endl <<
@@ -1172,10 +1179,10 @@ ode_solver::ODE_result ode_solver::simple_ODE_SpaceEx_general(IVector const & X_
         "output-format = INTV" << endl;
     
     out << "output-variables = \"";
-    for (int i = 0; i < NUM_VAR - 1; ++i) {
+    for (int i = 0; i < NUM_VAR; ++i) {
         out << index2varName[i] << ",";
     }
-    out << index2varName[NUM_VAR - 1] << "\"" << endl;
+    out << TIME_VAR << "\"" << endl;
     
     out.close();
     // end of SpaceEx config file
@@ -1183,8 +1190,9 @@ ode_solver::ODE_result ode_solver::simple_ODE_SpaceEx_general(IVector const & X_
     // call SpaceEx
     // TODO(christian) How should we set the path to SpaceEx?
     string callString = "spaceex -m " + MODEL_FILE_NAME +
-                        " -g " + CONFIG_FILE_NAME + " -o " + OUTPUT_FILE_NAME +
-                        " > screen" + numberString + ".txt";
+                        " -g " + CONFIG_FILE_NAME +
+                        " -o " + OUTPUT_FILE_NAME +
+                        " > " + SCREEN_FILE_NAME;
     system(callString.c_str());
     
     // open and parse output file
@@ -1211,8 +1219,7 @@ ode_solver::ODE_result ode_solver::simple_ODE_SpaceEx_general(IVector const & X_
         ++comma;
         string upper(line.substr(comma, end - comma));
         
-        interval const new_x_t =
-                    interval(std::stod(lower), std::stod(upper));
+        interval const new_x_t = interval(std::stod(lower), std::stod(upper));
         
         // intersection of old with new interval (variable-wise)
         interval & x_t = X_t[i];
@@ -1253,18 +1260,15 @@ string ode_solver::getInitString(IVector const & X_0, interval const & T,
     
     // add initial time point
     if (timeString.length() > 0) {
-        /*
-         * TODO(christian) We are actually interested in the reachable states in
-         * time interval [l, r] instead of [0, r].
-         */
-        str += " & " + timeString + " == 0";// + to_string(T.leftBound());
+        str += " & " + timeString + " == 0";
     }
     
     return str;
 }
 
 /* Christian: new function for printing invariant string */
-string ode_solver::getInvString(IVector const & inv, interval const & T, string * const index2varName, string const timeString) {
+string ode_solver::getInvString(IVector const & inv, interval const & T,
+                                string * const index2varName, string const timeString) {
     string str = "";
     
     // bounds for each variable
@@ -1320,6 +1324,10 @@ string ode_solver::getFlowString(unordered_map<string, Enode *> & flow_map, Enod
     }
     
     return str;
+}
+
+string ode_solver::getForbiddenString(interval const & T, string const timeString) {
+    return timeString + " >= " + to_string(T.leftBound());
 }
 
 /* Christian: new function for extracting the variable name */

@@ -153,12 +153,13 @@ private:
                                   capd::IVector const & inv,
                                   bool const forward);
     std::string getInitString(capd::IVector const & X_0, capd::interval const & T,
-                              string * const index2varName, string const TIME_VAR);
+                              string * const index2varName, string const timeString);
     std::string getInvString(capd::IVector const & inv, capd::interval const & T,
-                             string * const index2varName, string const TIME_VAR);
+                             string * const index2varName, string const timeString);
     std::string getFlowString(std::unordered_map<string, Enode *> & flow_map,
                               Enode * var_list, string * const index2varName,
                               string const TIME_VAR, bool const forward_dynamics);
+    std::string getForbiddenString(capd::interval const & T, string const timeString);
     std::string getVarName(Enode * var_list);
 
     template<typename T>
