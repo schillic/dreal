@@ -65,7 +65,7 @@ namespace dreal {
 static unsigned g_hit = 0;
 static unsigned g_nohit = 0;
 
-// TODO only for debugging purposes
+// TODO(christian) only for debugging purposes
 static int g_SpaceExCalls = 0;
 
 list<interval> split(interval const & i, unsigned n) {
@@ -495,17 +495,23 @@ ode_solver::ODE_result ode_solver::simple_ODE(rp_box b, bool forward) {
     update(b);
     ODE_result ret = ODE_result::SAT;
     
-    bool const USE_SPACEEX = true;
+    // Christian: use new pruning operators
+    bool const USE_SPACEEX_FORWARD = true;
+    bool const USE_SPACEEX_BACKWARD = true;
+//     std::cerr << "--- new round ---" << std::endl;
 
     if (forward) {
-	// Christian: use new function
-        if (USE_SPACEEX) {
+        if (USE_SPACEEX_FORWARD) {
             ret = simple_ODE_SpaceEx_forward(m_X_0, m_X_t, m_T, m_inv);
         } else {
             ret = simple_ODE_forward(m_X_0, m_X_t, m_T, m_inv, m_funcs);
         }
     } else {
-        ret = simple_ODE_backward(m_X_0, m_X_t, m_T, m_inv, m_funcs);
+        if (USE_SPACEEX_BACKWARD) {
+            ret = simple_ODE_SpaceEx_backward(m_X_0, m_X_t, m_T, m_inv);
+        } else {
+            ret = simple_ODE_backward(m_X_0, m_X_t, m_T, m_inv, m_funcs);
+        }
     }
     
     if (ret == ODE_result::UNSAT) {
@@ -513,10 +519,13 @@ ode_solver::ODE_result ode_solver::simple_ODE(rp_box b, bool forward) {
     }
 
     if (forward) {
-        return simple_ODE_backward(m_X_0, m_X_t, m_T, m_inv, m_funcs);
+        if (USE_SPACEEX_BACKWARD) {
+            return simple_ODE_SpaceEx_backward(m_X_0, m_X_t, m_T, m_inv);
+        } else {
+            return simple_ODE_backward(m_X_0, m_X_t, m_T, m_inv, m_funcs);
+        }
     } else {
-	// Christian: use new function
-        if (USE_SPACEEX) {
+        if (USE_SPACEEX_FORWARD) {
             return simple_ODE_SpaceEx_forward(m_X_0, m_X_t, m_T, m_inv);
         } else {
             return simple_ODE_forward(m_X_0, m_X_t, m_T, m_inv, m_funcs);
@@ -1060,30 +1069,48 @@ ode_solver::ODE_result ode_solver::simple_ODE_forward(IVector const & X_0, IVect
     return ODE_result::SAT;
 }
 
-/* Christian: new SpaceEx function */
+/* Christian: new SpaceEx function for forward pruning */
 ode_solver::ODE_result ode_solver::simple_ODE_SpaceEx_forward(IVector const & X_0, IVector & X_t,
                                                               interval const & T, IVector const & inv) {
+//     std::cerr << std::endl << "-- forward pruning --" << std::endl;
+//     std::cerr << X_0 << ", " << X_t << ", " << T << std::endl;
+    ode_solver::ODE_result res = simple_ODE_SpaceEx_general(X_0, X_t, T, inv, true);
+//     std::cerr << X_0 << ", " << X_t << ", " << T << std::endl;
+    return res;
+}
+
+/* Christian: new SpaceEx function for backward pruning
+ * The only differences to forward pruning are:
+ * - we start in X_t
+ * - we invert the dynamics by multiplying by -1
+ * - we refine X_0
+ */
+ode_solver::ODE_result ode_solver::simple_ODE_SpaceEx_backward(IVector & X_0, IVector const & X_t,
+                                                              interval const & T, IVector const & inv) {
+//     std::cerr << std::endl << "-- backward pruning --" << std::endl;
+//     std::cerr << X_0 << ", " << X_t << ", " << T << std::endl;
+    ode_solver::ODE_result res = simple_ODE_SpaceEx_general(X_t, X_0, T, inv, false);
+//     std::cerr << X_0 << ", " << X_t << ", " << T << std::endl;
+    return res;
+}
+
+/* Christian: new SpaceEx function for pruning */
+ode_solver::ODE_result ode_solver::simple_ODE_SpaceEx_general(IVector const & X_0, IVector & X_t,
+                                                              interval const & T, IVector const & inv,
+                                                              bool const forward) {
     bool const prune_params_result = prune_params();
     if (!prune_params_result) {
         return ODE_result::UNSAT;
     }
     
-    // TODO debugging: additional counter to write new files for each call
+    // TODO(christian) debugging: additional counter to write new files for each call
     string const numberString = to_string(++g_SpaceExCalls);
     
-    string const SPACEEX_PATH = "/home/christian/programs/SpaceEx"; // TODO not general
     string const MODEL_FILE_NAME = "mymodel" + numberString + ".xml";
     string const CONFIG_FILE_NAME = "myconfig" + numberString + ".cfg";
     string const OUTPUT_FILE_NAME = "myoutput" + numberString + ".txt";
     int const NUM_VAR = X_0.dimension();
-    
-    /* 
-     * Name of a new time variable for plotting
-     * Can be set to empty string for deactivation
-     * TODO debugging
-     */
-    bool const ADD_TIME_VARIABLE = false;
-    string const TIME_VAR = ADD_TIME_VARIABLE ? m_time->getCar()->getName() : "";
+    string const TIME_VAR = m_time->getCar()->getName();
     
     // mapping from variable name to ODE
     string const flow_step = (m_egraph.stepped_flows ? to_string(m_step) + "_" : "");
@@ -1105,7 +1132,12 @@ ode_solver::ODE_result ode_solver::simple_ODE_SpaceEx_forward(IVector const & X_
     // strings describing initial states, invariant, flow
     string const initialString = getInitString(X_0, T, index2varName, TIME_VAR);
     string const invString = getInvString(inv, T, index2varName, TIME_VAR);
-    string const flowString = getFlowString(flow_map, m_int->getCdr()->getCdr()->getCdr()->getCdr(), index2varName, TIME_VAR);
+    string const flowString = getFlowString(flow_map, m_int->getCdr()->getCdr()->getCdr()->getCdr(),
+                                            index2varName, TIME_VAR, forward);
+    
+//     std::cerr << "init: " << initialString << std::endl;
+//     std::cerr << "inv: " << invString << std::endl;
+//     std::cerr << "flow: " << flowString << std::endl;
     
     // Christian: For the moment, write a SpaceEx model file
     std::ofstream out(MODEL_FILE_NAME);
@@ -1131,7 +1163,6 @@ ode_solver::ODE_result ode_solver::simple_ODE_SpaceEx_forward(IVector const & X_
 
     // Christian: For the moment, write a SpaceEx config file
     out.open(CONFIG_FILE_NAME);
-    // TODO Which parts are actually necessary?
     out << "system = system" << endl <<
         "initially = " << initialString << endl <<
         "scenario = stc" << endl <<
@@ -1150,7 +1181,8 @@ ode_solver::ODE_result ode_solver::simple_ODE_SpaceEx_forward(IVector const & X_
     // end of SpaceEx config file
     
     // call SpaceEx
-    string callString = SPACEEX_PATH + "/spaceex -m " + MODEL_FILE_NAME +
+    // TODO(christian) How should we set the path to SpaceEx?
+    string callString = "spaceex -m " + MODEL_FILE_NAME +
                         " -g " + CONFIG_FILE_NAME + " -o " + OUTPUT_FILE_NAME +
                         " > screen" + numberString + ".txt";
     system(callString.c_str());
@@ -1184,20 +1216,29 @@ ode_solver::ODE_result ode_solver::simple_ODE_SpaceEx_forward(IVector const & X_
         
         // intersection of old with new interval (variable-wise)
         interval & x_t = X_t[i];
+//         std::cerr << new_x_t << " cap " << x_t;
         if (!intersection(new_x_t, x_t, x_t)) {
+//             std::cerr << " = []" << std::endl;
             DREAL_LOG_INFO << "ode_solver::simple_ODE_SpaceEx_forward: no intersection for X_T => UNSAT";
             return ODE_result::UNSAT;
         }
+//         std::cerr << " = " << x_t << std::endl;
     }
     in.close();
     
     // update
-    IVector_to_varlist(X_t, m_t_vars);
+    if (forward) {
+        IVector_to_varlist(X_t, m_t_vars);
+    } else {
+        IVector_to_varlist(X_t, m_0_vars);
+    }
     return ODE_result::SAT;
 }
 
 /* Christian: new function for printing initial states string */
-string ode_solver::getInitString(IVector const & X_0, interval const & T, string * const index2varName, string const timeString) {
+string ode_solver::getInitString(IVector const & X_0, interval const & T,
+                                 string * const index2varName,
+                                 string const timeString) {
     string str = "";
     
     // bounds for each variable
@@ -1213,8 +1254,8 @@ string ode_solver::getInitString(IVector const & X_0, interval const & T, string
     // add initial time point
     if (timeString.length() > 0) {
         /*
-         * TODO We are actually interested in the reachable states in time
-         * interval [l, r] instead of [0, r].
+         * TODO(christian) We are actually interested in the reachable states in
+         * time interval [l, r] instead of [0, r].
          */
         str += " & " + timeString + " == 0";// + to_string(T.leftBound());
     }
@@ -1245,7 +1286,9 @@ string ode_solver::getInvString(IVector const & inv, interval const & T, string 
 }
 
 /* Christian: new function for printing flow string */
-string ode_solver::getFlowString(unordered_map<string, Enode *> & flow_map, Enode * var_list, string * const index2varName, string const timeString) {
+string ode_solver::getFlowString(unordered_map<string, Enode *> & flow_map, Enode * var_list,
+                                 string * const index2varName, string const timeString,
+                                 bool const forward_dynamics) {
     string str = "";
     
     // get flow for each variable
@@ -1260,7 +1303,11 @@ string ode_solver::getFlowString(unordered_map<string, Enode *> & flow_map, Enod
         if (i > 0) {
              str += " &amp; ";
         }
-        str += name + "' == " + ss.str();
+        if (forward_dynamics) {
+            str += name + "' == " + ss.str();
+        } else {
+            str += name + "' == " + "-(" + ss.str() + ")";
+        }
         
         // continue in list
         var_list = var_list->getCdr()->getCdr();

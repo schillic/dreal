@@ -128,14 +128,6 @@ private:
                                   capd::interval const & T,
                                   capd::IVector const & inv,
                                   vector<capd::IFunction> & funcs);
-    ODE_result simple_ODE_SpaceEx_forward(capd::IVector const & X_0,
-                                  capd::IVector & X_t,
-                                  capd::interval const & T,
-                                  capd::IVector const & inv);
-    std::string getInitString(capd::IVector const & X_0, capd::interval const & T, string * const index2varName, string const TIME_VAR);
-    std::string getInvString(capd::IVector const & inv, capd::interval const & T, string * const index2varName, string const TIME_VAR);
-    std::string getFlowString(std::unordered_map<string, Enode *> & flow_map, Enode * var_list, string * const index2varName, string const TIME_VAR);
-    std::string getVarName(Enode * var_list);
     ODE_result simple_ODE_backward(capd::IVector & X_0,
                                    capd::IVector const & X_t,
                                    capd::interval const & T,
@@ -146,6 +138,28 @@ private:
     ODE_result compute_backward(std::vector<std::pair<capd::interval, capd::IVector>> & bucket);
     ODE_result prune_backward(std::vector<std::pair<capd::interval, capd::IVector>> & bucket);
     bool prune_params();
+    
+    ODE_result simple_ODE_SpaceEx_forward(capd::IVector const & X_0,
+                                  capd::IVector & X_t,
+                                  capd::interval const & T,
+                                  capd::IVector const & inv);
+    ODE_result simple_ODE_SpaceEx_backward(capd::IVector & X_0,
+                                  capd::IVector const & X_t,
+                                  capd::interval const & T,
+                                  capd::IVector const & inv);
+    ODE_result simple_ODE_SpaceEx_general(capd::IVector const & X_0,
+                                  capd::IVector & X_t,
+                                  capd::interval const & T,
+                                  capd::IVector const & inv,
+                                  bool const forward);
+    std::string getInitString(capd::IVector const & X_0, capd::interval const & T,
+                              string * const index2varName, string const TIME_VAR);
+    std::string getInvString(capd::IVector const & inv, capd::interval const & T,
+                             string * const index2varName, string const TIME_VAR);
+    std::string getFlowString(std::unordered_map<string, Enode *> & flow_map,
+                              Enode * var_list, string * const index2varName,
+                              string const TIME_VAR, bool const forward_dynamics);
+    std::string getVarName(Enode * var_list);
 
     template<typename T>
     void set_params(T & f) {
