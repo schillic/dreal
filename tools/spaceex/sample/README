@@ -1,0 +1,49 @@
+To compile the test program, run
+ $ make
+
+This will generate the executable and a run script which is able to link the
+executable properly to the library.
+
+To run the executable, either use
+ $ make run
+or
+ $ ./run.sh
+
+
+To clean, use
+ $ make clean
+
+###############################################################################
+
+About the sample:
+
+The sample creates the necessary data structures to compute the continuous post
+for some given invariant and dynamic behavior. It then sets the variables the
+values after the computation of the continuous post should be plotted for.
+Finally, after setting some SpaceEx parameters such as the time horizon and a
+sampling time, SpaceEx' continuous post calculation is called and the result is
+printed.
+
+Note: The SpaceEx scenario that is used to compute the continuous post is the
+support function scenario (supp). Currently, no other scenarios are supported.
+
+
+The choice of output variables:
+
+When you define the output variables SpaceEx should return from its
+computation, you are not allowed to use constants. If you use constants,
+SpaceEx will terminate with a segmentation fault in the current output format.
+A constant is a variable you have not defined dynamic behavior for.
+
+Example:
+	Invariant:	"x >= 0 && y <= 10"
+	Flow:		"x' == 1 && y' == x + g"
+	Initial:	"x == 0 && y == 10 && g == -50"
+
+Here, there is no dynamic behavior specified for g. Therefore, if you define
+your output variables as {"x", "y", "g"}, SpaceEx will segfault.
+
+To avoid this segmentation fault, you can add a dynamic behavior for g:
+	"x' == 1 && y' == x + g && g' == 0"
+
+This allows you to also output the values for g.
