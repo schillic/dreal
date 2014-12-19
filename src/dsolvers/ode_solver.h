@@ -141,19 +141,19 @@ private:
     
     ODE_result simple_ODE_SpaceEx_forward(capd::IVector const & X_0,
                                   capd::IVector & X_t,
-                                  capd::interval const & T,
+                                  capd::interval & T,
                                   capd::IVector const & inv);
     ODE_result simple_ODE_SpaceEx_backward(capd::IVector & X_0,
                                   capd::IVector const & X_t,
-                                  capd::interval const & T,
+                                  capd::interval & T,
                                   capd::IVector const & inv);
     ODE_result simple_ODE_SpaceEx_general(capd::IVector const & X_0,
                                   capd::IVector & X_t,
-                                  capd::interval const & T,
+                                  capd::interval & T,
                                   capd::IVector const & inv,
                                   bool const forward);
-    std::string getInitString(capd::IVector const & X_0, capd::interval const & T,
-                              string * const index2varName, string const timeString);
+    std::string getInitString(capd::IVector const & X_0,string * const index2varName,
+                              string const timeString);
     std::string getInvString(capd::IVector const & inv, capd::interval const & T,
                              string * const index2varName, string const timeString);
     std::string getFlowString(std::unordered_map<string, Enode *> & flow_map,

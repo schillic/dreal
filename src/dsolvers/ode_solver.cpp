@@ -1071,7 +1071,7 @@ ode_solver::ODE_result ode_solver::simple_ODE_forward(IVector const & X_0, IVect
 
 /* Christian: new SpaceEx function for forward pruning */
 ode_solver::ODE_result ode_solver::simple_ODE_SpaceEx_forward(IVector const & X_0, IVector & X_t,
-                                                              interval const & T, IVector const & inv) {
+                                                              interval & T, IVector const & inv) {
 //     std::cerr << std::endl << "-- forward pruning --" << std::endl;
 //     std::cerr << X_0 << ", " << X_t << ", " << T << std::endl;
     ode_solver::ODE_result res = simple_ODE_SpaceEx_general(X_0, X_t, T, inv, true);
@@ -1087,7 +1087,7 @@ ode_solver::ODE_result ode_solver::simple_ODE_SpaceEx_forward(IVector const & X_
  * - we refine X_0
  */
 ode_solver::ODE_result ode_solver::simple_ODE_SpaceEx_backward(IVector & X_0, IVector const & X_t,
-                                                              interval const & T, IVector const & inv) {
+                                                              interval & T, IVector const & inv) {
 //     std::cerr << std::endl << "-- backward pruning --" << std::endl;
 //     std::cerr << X_0 << ", " << X_t << ", " << T << std::endl;
     ode_solver::ODE_result res = simple_ODE_SpaceEx_general(X_t, X_0, T, inv, false);
@@ -1098,7 +1098,7 @@ ode_solver::ODE_result ode_solver::simple_ODE_SpaceEx_backward(IVector & X_0, IV
 
 /* Christian: new SpaceEx function for pruning */
 ode_solver::ODE_result ode_solver::simple_ODE_SpaceEx_general(IVector const & X_0, IVector & X_t,
-                                                              interval const & T, IVector const & inv,
+                                                              interval & T, IVector const & inv,
                                                               bool const forward) {
     bool const prune_params_result = prune_params();
     if (!prune_params_result) {
@@ -1134,7 +1134,7 @@ ode_solver::ODE_result ode_solver::simple_ODE_SpaceEx_general(IVector const & X_
     }
     
     // strings describing initial states, invariant, flow
-    string const initialString = getInitString(X_0, T, index2varName, TIME_VAR);
+    string const initialString = getInitString(X_0, index2varName, TIME_VAR);
     string const invString = getInvString(inv, T, index2varName, TIME_VAR);
     string const flowString = getFlowString(flow_map, m_int->getCdr()->getCdr()->getCdr()->getCdr(),
                                             index2varName, TIME_VAR, forward);
@@ -1204,11 +1204,6 @@ ode_solver::ODE_result ode_solver::simple_ODE_SpaceEx_general(IVector const & X_
         if (i < 0) {
             continue;
         }
-        
-        if (i == NUM_VAR) {
-            break;
-        }
-        
         // one iteration per variable; current = xi
         
         // split interval string
@@ -1218,18 +1213,32 @@ ode_solver::ODE_result ode_solver::simple_ODE_SpaceEx_general(IVector const & X_
         string lower(line.substr(start, comma - start));
         ++comma;
         string upper(line.substr(comma, end - comma));
-        
         interval const new_x_t = interval(std::stod(lower), std::stod(upper));
         
-        // intersection of old with new interval (variable-wise)
-        interval & x_t = X_t[i];
-//         std::cerr << new_x_t << " cap " << x_t;
-        if (!intersection(new_x_t, x_t, x_t)) {
-//             std::cerr << " = []" << std::endl;
-            DREAL_LOG_INFO << "ode_solver::simple_ODE_SpaceEx_forward: no intersection for X_T => UNSAT";
-            return ODE_result::UNSAT;
+        if (i == NUM_VAR) {
+            // time variable pruning = intersection of old with new interval
+            if (forward) {
+//                 std::cerr << new_x_t << " cap " << T;
+                if (!intersection(new_x_t, T, T)) {
+//                     std::cerr << " = []" << std::endl;
+                    DREAL_LOG_INFO << "ode_solver::simple_ODE_SpaceEx_forward: no intersection for T => UNSAT";
+                    return ODE_result::UNSAT;
+                }
+//                 std::cerr << " = " << T << std::endl;
+            }
+            break;
+        } else {
+            // state variable pruning = intersection of old with new interval
+            interval & x_t = X_t[i];
+            
+//             std::cerr << new_x_t << " cap " << x_t;
+            if (!intersection(new_x_t, x_t, x_t)) {
+//                 std::cerr << " = []" << std::endl;
+                DREAL_LOG_INFO << "ode_solver::simple_ODE_SpaceEx_forward: no intersection for X_T => UNSAT";
+                return ODE_result::UNSAT;
+            }
+//             std::cerr << " = " << x_t << std::endl;
         }
-//         std::cerr << " = " << x_t << std::endl;
     }
     in.close();
     
@@ -1243,8 +1252,7 @@ ode_solver::ODE_result ode_solver::simple_ODE_SpaceEx_general(IVector const & X_
 }
 
 /* Christian: new function for printing initial states string */
-string ode_solver::getInitString(IVector const & X_0, interval const & T,
-                                 string * const index2varName,
+string ode_solver::getInitString(IVector const & X_0, string * const index2varName,
                                  string const timeString) {
     string str = "";
     
