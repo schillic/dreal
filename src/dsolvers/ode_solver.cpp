@@ -1176,6 +1176,8 @@ ode_solver::ODE_result ode_solver::simple_ODE_SpaceEx_general(IVector const & X_
         "directions = box" << endl <<
         "iter-max = 1" << endl <<
         "time-horizon = " << to_string(T.rightBound()) << endl <<
+        "rel-err = 1e-12" << endl <<
+        "abs-err = 1e-15" << endl <<
         "output-format = INTV" << endl;
     
     out << "output-variables = \"";
@@ -1192,13 +1194,14 @@ ode_solver::ODE_result ode_solver::simple_ODE_SpaceEx_general(IVector const & X_
     string callString = "spaceex -m " + MODEL_FILE_NAME +
                         " -g " + CONFIG_FILE_NAME +
                         " -o " + OUTPUT_FILE_NAME +
-                        " > " + SCREEN_FILE_NAME;
+                        " -v D7 > " + SCREEN_FILE_NAME;
     system(callString.c_str());
     
     // open and parse output file
     std::ifstream in(OUTPUT_FILE_NAME);
     string line;
     int i = -3;
+    double const ERROR_BOUND = 0.0000000000001;
     while (getline (in, line)) {
         ++i;
         if (i < 0) {
@@ -1213,12 +1216,13 @@ ode_solver::ODE_result ode_solver::simple_ODE_SpaceEx_general(IVector const & X_
         string lower(line.substr(start, comma - start));
         ++comma;
         string upper(line.substr(comma, end - comma));
-        interval const new_x_t = interval(std::stod(lower), std::stod(upper));
+        interval const new_x_t = interval(std::stod(lower) - ERROR_BOUND,
+                                          std::stod(upper) + ERROR_BOUND);
         
         if (i == NUM_VAR) {
             // time variable pruning = intersection of old with new interval
             if (forward) {
-//                 std::cerr << new_x_t << " cap " << T;
+//                 std::cerr << TIME_VAR << ": " << new_x_t << " cap " << T;
                 if (!intersection(new_x_t, T, T)) {
 //                     std::cerr << " = []" << std::endl;
                     DREAL_LOG_INFO << "ode_solver::simple_ODE_SpaceEx_forward: no intersection for T => UNSAT";
@@ -1231,7 +1235,7 @@ ode_solver::ODE_result ode_solver::simple_ODE_SpaceEx_general(IVector const & X_
             // state variable pruning = intersection of old with new interval
             interval & x_t = X_t[i];
             
-//             std::cerr << new_x_t << " cap " << x_t;
+//             std::cerr << index2varName[i] << ": " << new_x_t << " cap " << x_t;
             if (!intersection(new_x_t, x_t, x_t)) {
 //                 std::cerr << " = []" << std::endl;
                 DREAL_LOG_INFO << "ode_solver::simple_ODE_SpaceEx_forward: no intersection for X_T => UNSAT";
