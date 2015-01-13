@@ -2,7 +2,7 @@
 INCLUDEDIR	= ../include
 LIB		= spaceex
 LIBDIR		= ../lib
-LDFLAGS		= -L$(LIBDIR) -l$(LIB) -lnlopt -lppl -lboost_program_options
+LDFLAGS		= -L$(LIBDIR) -l$(LIB) -lnlopt -lppl -lboost_program_options -lglpk -lcolamd -lamd
 CFLAGS		= $(LDFLAGS) -I$(INCLUDEDIR)
 
 EXECUTABLE	= test
@@ -15,7 +15,7 @@ CC		= g++
 all: $(OBJECTS)
 
 $(COBJECTS): $(addsuffix .o,$(COBJECTS))
-	$(CC) $(LDFLAGS) $? -o $@
+	$(CC) -L$(LIBDIR) $? -l$(LIB) -lnlopt -lppl -lboost_program_options -lglpk -lcolamd -lamd -o $@
 
 $(addsuffix .o,$(COBJECTS)): $(addsuffix .cpp,$(COBJECTS)) $(INCLUDEDIR)/sspaceex_api.h
 	$(CC) $(CFLAGS) -c $(@:%.o=%.cpp) -o $@
