@@ -2,7 +2,7 @@
 INCLUDEDIR	= ../include
 LIB		= spaceex
 LIBDIR		= ../lib
-LDFLAGS		= -L$(LIBDIR) -l$(LIB)
+LDFLAGS		= -L$(LIBDIR) -l$(LIB) -lnlopt -lppl -lboost_program_options
 CFLAGS		= $(LDFLAGS) -I$(INCLUDEDIR)
 
 EXECUTABLE	= test
