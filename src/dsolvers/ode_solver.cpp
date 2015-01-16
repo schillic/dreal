@@ -34,6 +34,7 @@ along with dReal. If not, see <http://www.gnu.org/licenses/>.
 #include "util/logging.h"
 #include "dsolvers/ode_solver.h"
 #include "util/string.h"
+#include "../tools/spaceex/include/sspaceex_api.h"
 
 using capd::C0Rect2Set;
 using capd::IFunction;
@@ -497,18 +498,24 @@ ode_solver::ODE_result ode_solver::simple_ODE(rp_box b, bool forward) {
     
     // Christian: use new pruning operators
     bool const USE_SPACEEX_FORWARD = true;
+    bool const USE_FLOWSTAR_FORWARD = !USE_SPACEEX_FORWARD && false;
     bool const USE_SPACEEX_BACKWARD = true;
+    bool const USE_FLOWSTAR_BACKWARD = !USE_SPACEEX_BACKWARD && false;
 //     std::cerr << "--- new round ---" << std::endl;
 
     if (forward) {
         if (USE_SPACEEX_FORWARD) {
             ret = simple_ODE_SpaceEx_forward(m_X_0, m_X_t, m_T, m_inv);
+        } else if (USE_FLOWSTAR_FORWARD) {
+            ret = simple_ODE_FlowStar_forward(m_X_0, m_X_t, m_T, m_inv);
         } else {
             ret = simple_ODE_forward(m_X_0, m_X_t, m_T, m_inv, m_funcs);
         }
     } else {
         if (USE_SPACEEX_BACKWARD) {
             ret = simple_ODE_SpaceEx_backward(m_X_0, m_X_t, m_T, m_inv);
+        } else if (USE_FLOWSTAR_BACKWARD) {
+            ret = simple_ODE_FlowStar_backward(m_X_0, m_X_t, m_T, m_inv);
         } else {
             ret = simple_ODE_backward(m_X_0, m_X_t, m_T, m_inv, m_funcs);
         }
@@ -521,12 +528,16 @@ ode_solver::ODE_result ode_solver::simple_ODE(rp_box b, bool forward) {
     if (forward) {
         if (USE_SPACEEX_BACKWARD) {
             return simple_ODE_SpaceEx_backward(m_X_0, m_X_t, m_T, m_inv);
+        } else if (USE_FLOWSTAR_BACKWARD) {
+            return simple_ODE_FlowStar_backward(m_X_0, m_X_t, m_T, m_inv);
         } else {
             return simple_ODE_backward(m_X_0, m_X_t, m_T, m_inv, m_funcs);
         }
     } else {
         if (USE_SPACEEX_FORWARD) {
             return simple_ODE_SpaceEx_forward(m_X_0, m_X_t, m_T, m_inv);
+        } else if (USE_FLOWSTAR_FORWARD) {
+            return simple_ODE_FlowStar_forward(m_X_0, m_X_t, m_T, m_inv);
         } else {
             return simple_ODE_forward(m_X_0, m_X_t, m_T, m_inv, m_funcs);
         }
@@ -1075,6 +1086,7 @@ ode_solver::ODE_result ode_solver::simple_ODE_SpaceEx_forward(IVector const & X_
 //     std::cerr << std::endl << "-- forward pruning --" << std::endl;
 //     std::cerr << X_0 << ", " << X_t << ", " << T << std::endl;
     ode_solver::ODE_result res = simple_ODE_SpaceEx_general(X_0, X_t, T, inv, true);
+//     ode_solver::ODE_result res = simple_ODE_SpaceEx_general_files(X_0, X_t, T, inv, true);
 //     std::cerr << X_0 << ", " << X_t << ", " << T << std::endl;
 //     std::cerr << "res = " << res << std::endl;
     return res;
@@ -1091,15 +1103,146 @@ ode_solver::ODE_result ode_solver::simple_ODE_SpaceEx_backward(IVector & X_0, IV
 //     std::cerr << std::endl << "-- backward pruning --" << std::endl;
 //     std::cerr << X_0 << ", " << X_t << ", " << T << std::endl;
     ode_solver::ODE_result res = simple_ODE_SpaceEx_general(X_t, X_0, T, inv, false);
+//     ode_solver::ODE_result res = simple_ODE_SpaceEx_general_files(X_t, X_0, T, inv, false);
 //     std::cerr << X_0 << ", " << X_t << ", " << T << std::endl;
 //     std::cerr << "res = " << res << std::endl;
     return res;
 }
 
-/* Christian: new SpaceEx function for pruning */
-ode_solver::ODE_result ode_solver::simple_ODE_SpaceEx_general(IVector const & X_0, IVector & X_t,
-                                                              interval & T, IVector const & inv,
-                                                              bool const forward) {
+/* Christian: new SpaceEx function for pruning in library mode */
+ode_solver::ODE_result ode_solver::simple_ODE_SpaceEx_general(IVector const & X_0,
+            IVector & X_t, interval & T, IVector const & inv, bool const forward) {
+    bool const prune_params_result = prune_params();
+    if (!prune_params_result) {
+        return ODE_result::UNSAT;
+    }
+    
+    int const NUM_VAR = X_0.dimension();
+    string const TIME_VAR = m_time->getCar()->getName();
+    
+    // mapping from variable name to ODE
+    string const flow_step = (m_egraph.stepped_flows ? to_string(m_step) + "_" : "");
+    unordered_map<string, Enode *> & flow_map = m_egraph.flow_maps[string("flow_") + flow_step + to_string(m_mode)];
+    
+    // mapping from variable index to name
+    string * const index2varName = new string[NUM_VAR];
+    Enode * var_list = m_int->getCdr()->getCdr()->getCdr()->getCdr();
+    int index = 0;
+    while (!var_list->isEnil()) {
+        string const name = getVarName(var_list);
+        index2varName[index] = name;
+        
+        // continue in list
+        var_list = var_list->getCdr()->getCdr();
+        ++index;
+    }
+    
+    // strings describing initial states, invariant, flow
+    string const initialString = getInitString(X_0, index2varName, TIME_VAR);
+    string const invString = getInvString(inv, T, index2varName, TIME_VAR, false);
+    string const flowString = getFlowString(flow_map, m_int->getCdr()->getCdr()->getCdr()->getCdr(),
+                                            index2varName, TIME_VAR, forward, false);
+    string const forbiddenString = getForbiddenString(T, TIME_VAR);
+    
+//     std::cerr << "init: " << initialString << std::endl;
+//     std::cerr << "inv: " << invString << std::endl;
+//     std::cerr << "flow: " << flowString << std::endl;
+//     std::cerr << "forbidden: " << forbiddenString << std::endl;
+    
+    // create struct with a location
+    location loc;
+    loc.invariant = invString.c_str();
+    loc.flow = flowString.c_str();
+    
+    // convert initial string
+    const char* initial = initialString.c_str();
+    
+    // create struct with output variables
+    output_variables outputs;
+    outputs.size = NUM_VAR + 1;
+    const char** vars = new const char*[NUM_VAR];
+    for (int i = 0; i < NUM_VAR; ++i) {
+        vars[i] = index2varName[i].c_str();
+    }
+    vars[NUM_VAR] = TIME_VAR.c_str();
+    outputs.variables = vars;
+    
+    // create struct with result for SpaceEx
+    spaceex_result result;
+    spaceex_variable_valuation resvals[NUM_VAR + 1];
+    result.variable_results = resvals;
+    
+    // set options
+    /* TODO(christian) How does this "time horizon" option work?
+     * We need to take a bigger number than T, otherwise it can result in an
+     * underapproximation
+     */
+    set_time_horizon(T.rightBound() + 1);
+    // TODO(christian) What should we set here? Parameterize function?
+    set_sampling_time(0.01);
+    
+    // TODO(christian) Currently there is no possibility to pass the forbidden states
+    
+    // run SpaceEx
+    continuous_post(loc, initial, outputs, result);
+    
+    // computational error allowed by SpaceEx
+    double const ERROR_BOUND = 0.0000000000001;
+    
+    // refine intervals wrt. SpaceEx output
+    for (int i = 0; i < result.size; ++i) {
+        spaceex_variable_valuation& var_val = result.variable_results[i];
+//         std::cerr << var_val.variable_name << " == " << var_val.valuation << std::endl;
+        
+        string line = string(var_val.valuation);
+        
+        // split interval string
+        int comma = line.find(',', 2);
+        int const end = line.find(']', comma + 2);
+        string lower(line.substr(1, comma - 1));
+        ++comma;
+        string upper(line.substr(comma, end - comma));
+        interval const new_x_t = interval(std::stod(lower) - ERROR_BOUND,
+                                          std::stod(upper) + ERROR_BOUND);
+        
+        if (i == NUM_VAR) {
+            // time variable pruning = intersection of old with new interval
+            if (forward) {
+//                 std::cerr << TIME_VAR << ": " << new_x_t << " cap " << T;
+                if (!intersection(new_x_t, T, T)) {
+//                     std::cerr << " = []" << std::endl;
+                    DREAL_LOG_INFO << "ode_solver::simple_ODE_SpaceEx_forward: no intersection for T => UNSAT";
+                    return ODE_result::UNSAT;
+                }
+//                 std::cerr << " = " << T << std::endl;
+            }
+        } else {
+            // state variable pruning = intersection of old with new interval
+            interval & x_t = X_t[i];
+            
+//             std::cerr << index2varName[i] << ": " << new_x_t << " cap " << x_t;
+            if (!intersection(new_x_t, x_t, x_t)) {
+//                 std::cerr << " = []" << std::endl;
+                DREAL_LOG_INFO << "ode_solver::simple_ODE_SpaceEx_forward: no intersection for X_T => UNSAT";
+                return ODE_result::UNSAT;
+            }
+//             std::cerr << " = " << x_t << std::endl;
+        }
+    }
+//     std::cerr << std::endl;
+    
+    // update
+    if (forward) {
+        IVector_to_varlist(X_t, m_t_vars);
+    } else {
+        IVector_to_varlist(X_t, m_0_vars);
+    }
+    return ODE_result::SAT;
+}
+
+/* Christian: new SpaceEx function for pruning in binary mode with communication via files */
+ode_solver::ODE_result ode_solver::simple_ODE_SpaceEx_general_files(IVector const & X_0,
+                    IVector & X_t, interval & T, IVector const & inv, bool const forward) {
     bool const prune_params_result = prune_params();
     if (!prune_params_result) {
         return ODE_result::UNSAT;
@@ -1135,9 +1278,9 @@ ode_solver::ODE_result ode_solver::simple_ODE_SpaceEx_general(IVector const & X_
     
     // strings describing initial states, invariant, flow
     string const initialString = getInitString(X_0, index2varName, TIME_VAR);
-    string const invString = getInvString(inv, T, index2varName, TIME_VAR);
+    string const invString = getInvString(inv, T, index2varName, TIME_VAR, true);
     string const flowString = getFlowString(flow_map, m_int->getCdr()->getCdr()->getCdr()->getCdr(),
-                                            index2varName, TIME_VAR, forward);
+                                            index2varName, TIME_VAR, forward, true);
     string const forbiddenString = getForbiddenString(T, TIME_VAR);
     
 //     std::cerr << "init: " << initialString << std::endl;
@@ -1154,11 +1297,9 @@ ode_solver::ODE_result ode_solver::simple_ODE_SpaceEx_general(IVector const & X_
         out << "    <param name=\"" << index2varName[i] <<
                 "\" type=\"real\" local=\"true\" d1=\"1\" d2=\"1\" dynamics=\"any\" />\"" << endl;
     }
-    if (TIME_VAR.length() > 0) {
-        out << "    <param name=\"" << TIME_VAR <<
-                "\" type=\"real\" local=\"true\" d1=\"1\" d2=\"1\" dynamics=\"any\" />\"" << endl;
-    }
-        out << "    <location id=\"1\" name=\"loc1\" x=\"300.0\" y=\"300.0\" width=\"300.0\" height=\"300.0\">" << endl <<
+    out << "    <param name=\"" << TIME_VAR <<
+        "\" type=\"real\" local=\"true\" d1=\"1\" d2=\"1\" dynamics=\"any\" />\"" << endl;
+    out << "    <location id=\"1\" name=\"loc1\" x=\"300.0\" y=\"300.0\" width=\"300.0\" height=\"300.0\">" << endl <<
         "      <invariant>" << invString << "</invariant>" << endl <<
         "      <flow>" << flowString << "</flow>" << endl <<
         "    </location>" << endl <<
@@ -1169,13 +1310,15 @@ ode_solver::ODE_result ode_solver::simple_ODE_SpaceEx_general(IVector const & X_
 
     // Christian: For the moment, write a SpaceEx config file
     out.open(CONFIG_FILE_NAME);
+    // TODO(christian: same question as for library mode: How to set parameters?)
     out << "system = system" << endl <<
         "initially = " << initialString << endl <<
         "forbidden = " << forbiddenString << endl <<
-        "scenario = stc" << endl <<
+        "scenario = supp" << endl <<
         "directions = box" << endl <<
         "iter-max = 1" << endl <<
-        "time-horizon = " << to_string(T.rightBound()) << endl <<
+        "sampling-time = " << 0.01 << endl <<
+        "time-horizon = " << to_string(T.rightBound() + 1) << endl <<
         "rel-err = 1e-12" << endl <<
         "abs-err = 1e-15" << endl <<
         "output-format = INTV" << endl;
@@ -1221,6 +1364,7 @@ ode_solver::ODE_result ode_solver::simple_ODE_SpaceEx_general(IVector const & X_
         
         if (i == NUM_VAR) {
             // time variable pruning = intersection of old with new interval
+//             std::cerr << TIME_VAR << " == [" << lower << ", " << upper << "]" << std::endl;
             if (forward) {
 //                 std::cerr << TIME_VAR << ": " << new_x_t << " cap " << T;
                 if (!intersection(new_x_t, T, T)) {
@@ -1232,6 +1376,7 @@ ode_solver::ODE_result ode_solver::simple_ODE_SpaceEx_general(IVector const & X_
             }
             break;
         } else {
+//             std::cerr << index2varName[i] << " == [" << lower << ", " << upper << "]" << std::endl;
             // state variable pruning = intersection of old with new interval
             interval & x_t = X_t[i];
             
@@ -1245,6 +1390,7 @@ ode_solver::ODE_result ode_solver::simple_ODE_SpaceEx_general(IVector const & X_
         }
     }
     in.close();
+//     std::cerr << std::endl;
     
     // update
     if (forward) {
@@ -1255,13 +1401,61 @@ ode_solver::ODE_result ode_solver::simple_ODE_SpaceEx_general(IVector const & X_
     return ODE_result::SAT;
 }
 
+/* Christian: new FlowStar function for forward pruning */
+ode_solver::ODE_result ode_solver::simple_ODE_FlowStar_forward(IVector const & X_0,
+            IVector & X_t, interval & T, IVector const & inv) {
+    bool const prune_params_result = prune_params();
+    if (!prune_params_result) {
+        return ODE_result::UNSAT;
+    }
+    
+    int const NUM_VAR = X_0.dimension();
+    
+    // mapping from variable name to ODE
+    string const flow_step = (m_egraph.stepped_flows ? to_string(m_step) + "_" : "");
+    unordered_map<string, Enode *> & flow_map = m_egraph.flow_maps[string("flow_") + flow_step + to_string(m_mode)];
+    
+    // mapping from variable index to name
+    string * const index2varName = new string[NUM_VAR];
+    Enode * var_list = m_int->getCdr()->getCdr()->getCdr()->getCdr();
+    int index = 0;
+    while (!var_list->isEnil()) {
+        string const name = getVarName(var_list);
+        index2varName[index] = name;
+        
+        // continue in list
+        var_list = var_list->getCdr()->getCdr();
+        ++index;
+    }
+    
+    // input string for FlowStar
+    string const flowStarString =
+            getFlowStarString(X_0, T, flow_map, m_int->getCdr()->getCdr()->getCdr()->getCdr(),
+                              index2varName, true);
+    
+    // run FlowStar
+    string callString = "flowstar <<< " + flowStarString;
+    std::cerr << callString << std::endl;
+    system(callString.c_str());
+    
+    
+    
+    // TODO(christian) missing: read in FlowStar output and prune
+}
+
+/* Christian: new FlowStar function for backward pruning */
+ode_solver::ODE_result ode_solver::simple_ODE_FlowStar_backward(IVector const & X_0,
+            IVector & X_t, interval & T, IVector const & inv) {
+    // TODO(christian) Write this function
+}
+
 /* Christian: new function for printing initial states string */
 string ode_solver::getInitString(IVector const & X_0, string * const index2varName,
                                  string const timeString) {
     string str = "";
     
     // bounds for each variable
-    for (int i = 0; i < X_0.dimension(); i++) {
+    for (unsigned i = 0; i < X_0.dimension(); i++) {
         interval const & x_0 = X_0[i];
         if (i > 0) {
              str += " & ";
@@ -1280,22 +1474,25 @@ string ode_solver::getInitString(IVector const & X_0, string * const index2varNa
 
 /* Christian: new function for printing invariant string */
 string ode_solver::getInvString(IVector const & inv, interval const & T,
-                                string * const index2varName, string const timeString) {
+                                string * const index2varName, string const timeString,
+                                bool const FILE) {
+    string const AND = (FILE ? " &amp; " : " & ");
+    string const LTE = (FILE ? " &lt;= " : " <= ");
     string str = "";
     
     // bounds for each variable
-    for (int i = 0; i < inv.dimension(); i++) {
+    for (unsigned i = 0; i < inv.dimension(); i++) {
         interval const & x = inv[i];
         if (i > 0) {
-             str += " &amp; ";
+             str += AND;
         }
-        str += to_string(x.leftBound()) + " &lt;= " + index2varName[i] +
-                    " &lt;= " + to_string(x.rightBound());
+        str += to_string(x.leftBound()) + LTE + index2varName[i] +
+                    LTE + to_string(x.rightBound());
     }
     
     // add time bound
     if (timeString.length() > 0) {
-        str += " &amp; " + timeString + " &lt;= " + to_string(T.rightBound());
+        str += AND + timeString + LTE + to_string(T.rightBound());
     }
     
     return str;
@@ -1304,7 +1501,8 @@ string ode_solver::getInvString(IVector const & inv, interval const & T,
 /* Christian: new function for printing flow string */
 string ode_solver::getFlowString(unordered_map<string, Enode *> & flow_map, Enode * var_list,
                                  string * const index2varName, string const timeString,
-                                 bool const forward_dynamics) {
+                                 bool const forward_dynamics, bool const FILE) {
+    string const AND = (FILE ? " &amp; " : " & ");
     string str = "";
     
     // get flow for each variable
@@ -1317,7 +1515,7 @@ string ode_solver::getFlowString(unordered_map<string, Enode *> & flow_map, Enod
         
         // add next flow conjunct
         if (i > 0) {
-             str += " &amp; ";
+             str += AND;
         }
         if (forward_dynamics) {
             str += name + "' == " + ss.str();
@@ -1332,7 +1530,7 @@ string ode_solver::getFlowString(unordered_map<string, Enode *> & flow_map, Enod
     
     // add time flow
     if (timeString.length() > 0) {
-        str += " &amp; " + timeString + "' == 1";
+        str += AND + timeString + "' == 1";
     }
     
     return str;
@@ -1354,6 +1552,113 @@ string ode_solver::getVarName(Enode * var_list) {
         name_prefix = name.substr(0, first_);
     }
     return name_prefix;
+}
+
+/* Christian: new function for printing initial states string for Flow* */
+string ode_solver::getFlowStarString(IVector const & X_0, interval const & T,
+                                     unordered_map<string, Enode *> & flow_map, Enode * var_list,
+                                     string * const index2varName,
+                                     bool const forward_dynamics) {
+    // TODO(christian) How should we set these options intelligently?
+    int const opt_ode_mode = 1;
+    double const opt_steps_l = 1.0;
+    double const opt_steps_r = 1.0;
+    string const opt_remainder = "1e-5";
+    string const opt_precondition = ((X_0.dimension() > 3) ? "identity" : "QR"); // TODO(christian) this was proposed in the manual
+    std::cerr << opt_precondition << std::endl;
+    int const opt_order_l = 5; // TODO(christian) We could even have different adaptive values for each dimension - need to change the code a bit in this case.
+    int const opt_order_r = 5;
+    string const opt_cutoff = "1e-15";
+    int const opt_precision = 53;
+    
+    // declare state variables
+    string str = "\"continuous reachability {\nstate var ";
+    for (unsigned i = 0; i < X_0.dimension(); i++) {
+        if (i > 0) {
+             str += ",";
+        }
+        str += index2varName[i];
+    }
+    
+    // define settings
+    str += "\nsetting {";
+    // - steps
+    if (opt_steps_l == opt_steps_r) {
+        str += "\nfixed steps " + to_string(opt_steps_l);
+    } else {
+        str += "\nadaptive steps { min " + to_string(opt_steps_l) + ", max " +
+               to_string(opt_steps_r) + " }";
+    }
+    // - time
+    str += "\ntime " + to_string(T.rightBound());
+    // - remainder estimation
+    str += "\nremainder estimation " + opt_remainder;
+    // - QR precondition
+    str += "\n" + opt_precondition + " precondition";
+    // - plotting
+    /* TODO(christian) This is not good:
+     * 1) Why do we have to plot at all?
+     * 2) What happens when there is only one variable?
+     */
+    str += "\n gnuplot interval " + index2varName[0] + "," + index2varName[1];
+    // - Taylor model order
+    if (opt_order_l == opt_order_r) {
+        str += "\nfixed orders " + to_string(opt_order_l);
+    } else {
+        str += "\nadaptive orders { min " + to_string(opt_order_l) + ", max " +
+               to_string(opt_order_r) + " }";
+    }
+    // threshold when a term is considered small to be cut off to the remainder
+    str += "\ncutoff " + opt_cutoff;
+    // - precision in the MPFR library
+    str += "\nprecision " + to_string(opt_precision);
+    // - output file
+    str += "\noutput output_flowstar";
+    // - printing
+    str += "\nprint off";
+    str += "\n}\n";
+    
+    // define flow
+    if (opt_ode_mode == 1) {
+        str += "poly ode 1";
+    } else if (opt_ode_mode == 2) {
+        str += "poly ode 2";
+    } else {
+        str += "nonpoly ode";
+    }
+    str += " {\n";
+    int i = 0;
+    while (!var_list->isEnil()) {
+        // read flow from data structure
+        string name = index2varName[i];
+        stringstream ss;
+        Enode * const func = flow_map[name];
+        func->print_infix(ss, true, "");
+        
+        // add flow string
+        if (forward_dynamics) {
+            str += name + "' = " + ss.str() + "\n";
+        } else {
+            str += name + "' = " + "-(" + ss.str() + ")\n";
+        }
+        
+        // continue in list
+        var_list = var_list->getCdr()->getCdr();
+        ++i;
+    }
+    
+    // define initial states
+    str += "}\ninit {\n";
+    for (unsigned i = 0; i < X_0.dimension(); i++) {
+        interval const & x_0 = X_0[i];
+        str += index2varName[i] + " in [" + to_string(x_0.leftBound()) + " , " +
+               to_string(x_0.rightBound()) + "]\n";
+    }
+    str += "}\n}\"";
+    
+//     std::cerr << "Output for FlowStar:" << std::endl << str << std::endl;
+    
+    return str;
 }
 
 ode_solver::ODE_result ode_solver::simple_ODE_backward(IVector & X_0, IVector const & X_t, interval const & T,

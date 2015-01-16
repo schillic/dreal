@@ -235,11 +235,16 @@ ExternalProject_Add(JSON11
 )
 set(EXTRA_LIBS ${EXTRA_LIBS} "json11")
 
+# edited by Christian -->
 ################################################################
 # External: set up include dir and libpath
 ################################################################
 include_directories(${CMAKE_CURRENT_BINARY_DIR}/include)
-set(EXTERNAL_LD_FLAGS "-L${CMAKE_CURRENT_BINARY_DIR}/lib")
+set(EXTERNAL_LD_FLAGS "-L${CMAKE_CURRENT_BINARY_DIR}/lib -L${CMAKE_SOURCE_DIR}/../tools/spaceex/lib")
+
+include_directories(${CMAKE_SOURCE_DIR}/../tools/spaceex/include)
+set(EXTRA_LIBS ${EXTRA_LIBS} "spaceex -lnlopt -lppl -lboost_program_options -lglpk -lcolamd -lamd")
+# edited by Christian <--
 
 ################################################################
 # CXX Flags

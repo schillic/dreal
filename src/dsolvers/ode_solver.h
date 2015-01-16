@@ -152,14 +152,33 @@ private:
                                   capd::interval & T,
                                   capd::IVector const & inv,
                                   bool const forward);
+    ODE_result simple_ODE_SpaceEx_general_files(capd::IVector const & X_0,
+                                  capd::IVector & X_t,
+                                  capd::interval & T,
+                                  capd::IVector const & inv,
+                                  bool const forward);
+    ODE_result simple_ODE_FlowStar_forward(capd::IVector const & X_0,
+                                  capd::IVector & X_t,
+                                  capd::interval & T,
+                                  capd::IVector const & inv);
+    ODE_result simple_ODE_FlowStar_backward(capd::IVector const & X_0,
+                                  capd::IVector & X_t,
+                                  capd::interval & T,
+                                  capd::IVector const & inv);
     std::string getInitString(capd::IVector const & X_0,string * const index2varName,
                               string const timeString);
     std::string getInvString(capd::IVector const & inv, capd::interval const & T,
-                             string * const index2varName, string const timeString);
+                             string * const index2varName, string const timeString,
+                             bool const FILE);
     std::string getFlowString(std::unordered_map<string, Enode *> & flow_map,
                               Enode * var_list, string * const index2varName,
-                              string const TIME_VAR, bool const forward_dynamics);
+                              string const TIME_VAR, bool const forward_dynamics,
+                              bool const FILE);
     std::string getForbiddenString(capd::interval const & T, string const timeString);
+    std::string getFlowStarString(capd::IVector const & X_0, capd::interval const & T,
+                                  std::unordered_map<string, Enode *> & flow_map,
+                                  Enode * var_list, std::string * const index2varName,
+                                  bool const forward_dynamics);
     std::string getVarName(Enode * var_list);
 
     template<typename T>
