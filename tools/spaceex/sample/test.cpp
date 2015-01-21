@@ -78,8 +78,31 @@ int main(int argc, char* argv[])
 
 	for (int i = 0; i < result.size; ++i) {
 		spaceex_variable_valuation& var_val = result.variable_results[i];
-		std::cout << var_val.variable_name << " == " << var_val.valuation << std::endl;
+		std::cout << var_val.variable_name << " == " << var_val.valuation_char << " -- As double: [" << var_val.lower_bound << ", " << var_val.upper_bound << "]" << std::endl;
 	}
+
+	// Intersect the result with a bad state
+	const char* bad_state = "x == 9";
+
+	spaceex_result_value intersection_result;
+	char msg[BUFFSIZE];
+
+	bool res = intersect_with_bad_state(bad_state, result, intersection_result, msg);
+
+	if (res) {
+		std::cout << "There is an intersection with the bad state." << std::endl;
+	}
+	else {
+		if (intersection_result == OK) {
+			std::cout << "No intersection with the bad state has been found." << std::endl;
+		}
+		else {
+			std::cerr << "Abnormal program termination: Something went wrong in the intersection calculation:" << std::endl;
+			return 1;
+		}
+	}
+
+	std::cout << "Result: " << msg << std::endl;
 
 	return 0;
 }

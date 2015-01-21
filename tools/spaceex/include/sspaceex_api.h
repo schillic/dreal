@@ -33,7 +33,9 @@ typedef struct {
  */
 typedef struct {
 	char variable_name[BUFFSIZE];
-	char valuation[BUFFSIZE];
+	char valuation_char[BUFFSIZE];
+	double lower_bound;
+	double upper_bound;
 } spaceex_variable_valuation;
 
 /**
@@ -99,5 +101,22 @@ SPACEEX_EXPORT void set_time_horizon(int time_horizon = 1000);
  * @param sampling_time
  */
 SPACEEX_EXPORT void set_sampling_time(double sampling_time = 0.01);
+
+/**
+ * Intersects a given calculated result with a given bad state.
+ *
+ * Returns true, if and only if an intersection with the bad state has been found, false otherwise.
+ *
+ * Note that in case of a return value of false, there might have happened an error which can be obtained through the
+ * returned return code and error message.
+ *
+ * @param bad_state
+ * @param result
+ * @param result_value
+ * @param message
+ * @return
+ */
+SPACEEX_EXPORT bool intersect_with_bad_state(const char* bad_state, spaceex_result& result,
+		spaceex_result_value& result_value, char message[BUFFSIZE]);
 
 #endif /* SSPACEEX_API_H_ */
