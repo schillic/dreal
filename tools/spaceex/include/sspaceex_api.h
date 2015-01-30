@@ -51,7 +51,7 @@ typedef struct {
 } spaceex_variable_valuation;
 
 /**
- * TODO
+ * Defines the different types of signs for linear constraints
  */
 typedef enum {
 	SIGN_LT, //!< SIGN_LT
@@ -62,7 +62,11 @@ typedef enum {
 } sign_type;
 
 /**
- * TODO
+ * Defines a linear constraint of the form: variable_name sign value
+ * For example: x <= 10
+ *
+ * valuation_char contains a string corresponding to the valuation
+ *
  */
 typedef struct {
 	char variable_name[BUFFSIZE];
