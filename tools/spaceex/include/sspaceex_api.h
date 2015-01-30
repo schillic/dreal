@@ -8,7 +8,19 @@
 #ifndef SSPACEEX_API_H_
 #define SSPACEEX_API_H_
 
+#ifdef __cplusplus
 #define SPACEEX_EXPORT extern "C" __attribute__ ((visibility ("default")))
+#else
+#define SPACEEX_EXPORT
+#if __STDC_VERSION__ >= 199901L
+// If C99, use stdbool instead of the own implementation of bool.
+#include <stdbool.h>
+#else
+typedef unsigned char bool;
+#define true 1;
+#define false 0;
+#endif
+#endif
 
 /**
  * The size of the buffer for returned strings
@@ -39,6 +51,32 @@ typedef struct {
 } spaceex_variable_valuation;
 
 /**
+ * TODO
+ */
+typedef enum {
+	SIGN_LT, //!< SIGN_LT
+	SIGN_LE, //!< SIGN_LE
+	SIGN_GT, //!< SIGN_GT
+	SIGN_GE, //!< SIGN_GE
+	SIGN_EQ //!< SIGN_EQ
+} sign_type;
+
+/**
+ * TODO
+ */
+typedef struct {
+	char variable_name[BUFFSIZE];
+	char valuation_char[BUFFSIZE];
+	sign_type sign;
+	double value;
+} linear_constraint;
+
+typedef struct {
+	unsigned int size;
+	linear_constraint constraints[BUFFSIZE];
+} constraints_result;
+
+/**
  * Possible return values of SpaceEx' computation
  */
 typedef enum {
@@ -46,6 +84,53 @@ typedef enum {
 	WARN, //!< WARN 	= There were some warnings issued
 	ERROR, //!< ERROR	= There was an error during the computation
 } spaceex_result_value;
+
+/**
+ * Defines a tribool, i.e. a boolean value that can be true, false, or unknown.
+ *
+ * value contains the boolean value.
+ * If value = true, then unknown = false.
+ * If value = false, and unknown = false, then the boolean value is false.
+ * If value = false, and unknown = true, then the boolean value is unkown.
+ *
+ * Note that the case value = true and unknown = true is undefined. If unknown = true, the boolean interpretation of the
+ * tribool is false.
+ */
+typedef struct spaceex_tribool {
+	bool value;
+	bool unknown;
+
+#ifdef __cplusplus // C++ convenience: spaceex_tribool should behave exactly like a bool.
+	spaceex_tribool() :
+			value(false), unknown(false) {
+	}
+
+	spaceex_tribool(const bool& b) :
+			value(b), unknown(false) {
+	}
+
+	inline operator bool() const {
+		if (unknown)
+			return false;
+		else
+			return value;
+	}
+
+	inline spaceex_tribool& operator=(const bool& b) {
+		value = b;
+		unknown = false;
+
+		return *this;
+	}
+
+	inline spaceex_tribool& operator=(spaceex_tribool& tb) {
+		value = tb.value;
+		unknown = tb.unknown;
+
+		return *this;
+	}
+#endif // __cplusplus
+} spaceex_tribool;
 
 /**
  * Defines a result returned from SpaceEx' continuous post computation. A spaceex_result is comprised of an array of
@@ -57,7 +142,7 @@ typedef enum {
  */
 typedef struct {
 	spaceex_variable_valuation* variable_results;
-	int size;
+	unsigned int size;
 	spaceex_result_value return_value;
 	const char* return_message;
 } spaceex_result;
@@ -94,13 +179,25 @@ SPACEEX_EXPORT void continuous_post(const location& loc, const char* initial, co
  * Sets the time horizon for the analysis.
  * @param time_horizon
  */
-SPACEEX_EXPORT void set_time_horizon(int time_horizon = 1000);
+SPACEEX_EXPORT void set_time_horizon(double time_horizon = 1000);
+
+/**
+ * Returns the currently set time horizon.
+ * @return
+ */
+SPACEEX_EXPORT double get_time_horizon();
 
 /**
  * Sets the sampling time for the analysis.
  * @param sampling_time
  */
 SPACEEX_EXPORT void set_sampling_time(double sampling_time = 0.01);
+
+/**
+ * Returns the currently set sampling time.
+ * @return
+ */
+SPACEEX_EXPORT double get_sampling_time();
 
 /**
  * Intersects a given calculated result with a given bad state.
@@ -116,7 +213,7 @@ SPACEEX_EXPORT void set_sampling_time(double sampling_time = 0.01);
  * @param message
  * @return
  */
-SPACEEX_EXPORT bool intersect_with_bad_state(const char* bad_state, spaceex_result& result,
-		spaceex_result_value& result_value, char message[BUFFSIZE]);
+SPACEEX_EXPORT spaceex_tribool intersect_with_bad_state(const char* bad_state, spaceex_result& result,
+		spaceex_result_value& result_value, char message[BUFFSIZE], constraints_result& intersection);
 
 #endif /* SSPACEEX_API_H_ */

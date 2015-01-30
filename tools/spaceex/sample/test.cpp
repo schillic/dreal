@@ -82,12 +82,18 @@ int main(int argc, char* argv[])
 	}
 
 	// Intersect the result with a bad state
-	const char* bad_state = "x == 9";
+	const char* bad_state = "x > 9";
 
 	spaceex_result_value intersection_result;
 	char msg[BUFFSIZE];
+	constraints_result intersection_constraints;
 
-	bool res = intersect_with_bad_state(bad_state, result, intersection_result, msg);
+	spaceex_tribool res = intersect_with_bad_state(bad_state, result, intersection_result, msg, intersection_constraints);
+
+	if (res.unknown) {
+		std::cout << "The intersection result is unknown." << std::endl;
+		return 0;
+	}
 
 	if (res) {
 		std::cout << "There is an intersection with the bad state." << std::endl;
@@ -103,6 +109,41 @@ int main(int argc, char* argv[])
 	}
 
 	std::cout << "Result: " << msg << std::endl;
+
+	if (res) {
+		std::cout << "The intersection consists of " << intersection_constraints.size << " constraints:" << std::endl;
+
+		for (int i = 0; i < intersection_constraints.size; ++i) {
+			std::cout << intersection_constraints.constraints[i].valuation_char << "    ";
+
+			std::cout << "From original values: ";
+
+			std::cout << intersection_constraints.constraints[i].variable_name;
+			
+			switch (intersection_constraints.constraints[i].sign) {
+			case SIGN_LT:
+				std::cout << " < ";
+				break;
+			case SIGN_LE:
+				std::cout << " <= ";
+				break;
+			case SIGN_GT:
+				std::cout << " > ";
+				break;
+			case SIGN_GE:
+				std::cout << " >= ";
+				break;
+			case SIGN_EQ:
+				std::cout << " == ";
+				break;
+			default:
+				std::cerr << "Unknown sign" << std::endl;
+				return 1;
+			}
+
+			std::cout << intersection_constraints.constraints[i].value << std::endl;
+		}
+	}
 
 	return 0;
 }
