@@ -1414,15 +1414,16 @@ ode_solver::ODE_result ode_solver::simple_ODE_FlowStar_forward(IVector const & X
                                         std::stod(upper) + ERROR_BOUND);
         
         string varName = line.substr(0, varEnd);
-        std::cerr << varName << ": [" << lower << " | " << upper << "]" << std::endl;
+        unsigned const j = findVariable(varName, index2varName, "", i, NUM_VAR);
+//         std::cerr << varName << ": [" << lower << " | " << upper << "]" << std::endl;
         
         // prune
-        if (prune_result(X_t, T, new_x_t, i, forward) == ODE_result::UNSAT) {
+        if (prune_result(X_t, T, new_x_t, j, forward) == ODE_result::UNSAT) {
             in.close();
             return ODE_result::UNSAT;
         }
         
-        // skip over remaining lines
+        // skip over remaining lines after last variable
         if (i == NUM_VAR - 1) {
             i = -4;
         }
