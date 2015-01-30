@@ -12,7 +12,7 @@
 #define SPACEEX_EXPORT extern "C" __attribute__ ((visibility ("default")))
 #else
 #define SPACEEX_EXPORT
-#if __STDC_VERSION__ >= 199901L
+#if (__STDC_VERSION__ >= 199901L)
 // If C99, use stdbool instead of the own implementation of bool.
 #include <stdbool.h>
 #else
