@@ -1289,7 +1289,7 @@ ode_solver::ODE_result ode_solver::simple_ODE_SpaceEx_general(IVector const & X_
         std::ifstream in(OUTPUT_FILE_NAME);
         string line;
         int i = -3;
-        while (getline (in, line)) {
+        while (getline(in, line)) {
             ++i;
             if (i < 0) {
                 continue;
@@ -1315,6 +1315,7 @@ ode_solver::ODE_result ode_solver::simple_ODE_SpaceEx_general(IVector const & X_
             
             // prune
             if (prune_result(X_t, T, new_x_t, j, forward) == ODE_result::UNSAT) {
+                in.close();
                 return ODE_result::UNSAT;
             }
             
@@ -1344,6 +1345,8 @@ ode_solver::ODE_result ode_solver::simple_ODE_FlowStar_forward(IVector const & X
         return ODE_result::UNSAT;
     }
     
+    bool const forward = true;
+    
     int const NUM_VAR = X_0.dimension();
     
     // mapping from variable name to ODE
@@ -1363,20 +1366,76 @@ ode_solver::ODE_result ode_solver::simple_ODE_FlowStar_forward(IVector const & X
         ++index;
     }
     
+    // name of the output files
+    string const OUTPUT_FILE_NAME = "output_flowstar";
+    
     // input string for FlowStar
     string const flowStarString =
             getFlowStarString(X_0, T, flow_map, m_int->getCdr()->getCdr()->getCdr()->getCdr(),
-                              index2varName, true);
+                              index2varName, true, OUTPUT_FILE_NAME);
     
     // run FlowStar
-    string callString = "flowstar <<< " + flowStarString;
-    std::cerr << callString << std::endl;
+    // TODO(christian) make this platform independent
+    string callString = "flowstar <<< " + flowStarString + " > /dev/null";
+//     std::cerr << callString << std::endl;
     system(callString.c_str());
     
+    // computational error allowed by FlowStar
+    double const ERROR_BOUND = 0.0000000000001;
     
+    // TODO(christian) this should be replaced by a dynamic condition checked in the loop (but how?)
+    bool IS_INTERESTING_FLOWPIPE = false;
     
-    // TODO(christian) missing: read in FlowStar output and prune
-    return ODE_result::UNSAT;
+    // open and parse output file
+    std::ifstream in("intervals/" + OUTPUT_FILE_NAME + ".flow");
+    string line;
+    int i = -2;
+    while (getline(in, line)) {
+        ++i;
+        if (i < 0) {
+            continue;
+        }
+        
+        // skip over non-interesting flowpipes
+        if (! IS_INTERESTING_FLOWPIPE) {
+            i = -4 - NUM_VAR;
+            continue;
+        }
+        
+        // for one flowpipe get the values of variable xi
+        int const varEnd = line.find(':', 1);
+        int const start = varEnd + 3;
+        int comma = line.find(',', start + 1);
+        int const end = line.find(']', comma + 2);
+        string lower(line.substr(start, comma - start));
+        ++comma;
+        string upper(line.substr(comma, end - comma));
+        interval const new_x_t = interval(std::stod(lower) - ERROR_BOUND,
+                                        std::stod(upper) + ERROR_BOUND);
+        
+        string varName = line.substr(0, varEnd);
+        std::cerr << varName << ": [" << lower << " | " << upper << "]" << std::endl;
+        
+        // prune
+        if (prune_result(X_t, T, new_x_t, i, forward) == ODE_result::UNSAT) {
+            in.close();
+            return ODE_result::UNSAT;
+        }
+        
+        // skip over remaining lines
+        if (i == NUM_VAR - 1) {
+            i = -4;
+        }
+    }
+    in.close();
+    
+    // update
+    if (forward) {
+        IVector_to_varlist(X_t, m_t_vars);
+    } else {
+        IVector_to_varlist(X_t, m_0_vars);
+    }
+    return ODE_result::SAT;
 }
 
 /* Christian: new FlowStar function for backward pruning */
@@ -1560,14 +1619,14 @@ string ode_solver::getVarName(Enode * var_list) {
 string ode_solver::getFlowStarString(IVector const & X_0, interval const & T,
                                      unordered_map<string, Enode *> & flow_map, Enode * var_list,
                                      string * const index2varName,
-                                     bool const forward_dynamics) {
+                                     bool const forward_dynamics,
+                                     string const outputFileName) {
     // TODO(christian) How should we set these options intelligently?
     int const opt_ode_mode = 1;
     double const opt_steps_l = 1.0;
     double const opt_steps_r = 1.0;
     string const opt_remainder = "1e-5";
     string const opt_precondition = ((X_0.dimension() > 3) ? "identity" : "QR"); // TODO(christian) this was proposed in the manual
-    std::cerr << opt_precondition << std::endl;
     int const opt_order_l = 5; // TODO(christian) We could even have different adaptive values for each dimension - need to change the code a bit in this case.
     int const opt_order_r = 5;
     string const opt_cutoff = "1e-15";
@@ -1615,7 +1674,7 @@ string ode_solver::getFlowStarString(IVector const & X_0, interval const & T,
     // - precision in the MPFR library
     str += "\nprecision " + to_string(opt_precision);
     // - output file
-    str += "\noutput output_flowstar";
+    str += "\noutput " + outputFileName;
     // - printing
     str += "\nprint off";
     str += "\n}\n";

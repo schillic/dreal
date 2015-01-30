@@ -179,7 +179,8 @@ private:
     std::string getFlowStarString(capd::IVector const & X_0, capd::interval const & T,
                                   std::unordered_map<string, Enode *> & flow_map,
                                   Enode * var_list, std::string * const index2varName,
-                                  bool const forward_dynamics);
+                                  bool const forward_dynamics,
+                                  string const outputFileName);
     std::string getVarName(Enode * var_list);
 
     template<typename T>
