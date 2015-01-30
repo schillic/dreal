@@ -1109,7 +1109,7 @@ ode_solver::ODE_result ode_solver::simple_ODE_SpaceEx_backward(IVector & X_0, IV
     return res;
 }
 
-/* Christian: new SpaceEx function for pruning in library mode */
+/* Christian: new SpaceEx function for pruning (general) */
 ode_solver::ODE_result ode_solver::simple_ODE_SpaceEx_general(IVector const & X_0,
             IVector & X_t, interval & T, IVector const & inv, bool const forward) {
     bool const prune_params_result = prune_params();
@@ -1117,13 +1117,16 @@ ode_solver::ODE_result ode_solver::simple_ODE_SpaceEx_general(IVector const & X_
         return ODE_result::UNSAT;
     }
     
+    // switch here for library or binary mode
+    bool const IS_LIBRARY_MODE = true;
+    
     int const NUM_VAR = X_0.dimension();
     string const TIME_VAR = m_time->getCar()->getName();
-    
+
     // mapping from variable name to ODE
     string const flow_step = (m_egraph.stepped_flows ? to_string(m_step) + "_" : "");
     unordered_map<string, Enode *> & flow_map = m_egraph.flow_maps[string("flow_") + flow_step + to_string(m_mode)];
-    
+
     // mapping from variable index to name
     string * const index2varName = new string[NUM_VAR];
     Enode * var_list = m_int->getCdr()->getCdr()->getCdr()->getCdr();
@@ -1137,261 +1140,193 @@ ode_solver::ODE_result ode_solver::simple_ODE_SpaceEx_general(IVector const & X_
         ++index;
     }
     
-    // strings describing initial states, invariant, flow
+    // strings describing initial states, invariant, flow, and forbidden states
     string const initialString = getInitString(X_0, index2varName, TIME_VAR);
-    string const invString = getInvString(inv, T, index2varName, TIME_VAR, false);
+    string const invString = getInvString(inv, T, index2varName, TIME_VAR, !IS_LIBRARY_MODE);
     string const flowString = getFlowString(flow_map, m_int->getCdr()->getCdr()->getCdr()->getCdr(),
-                                            index2varName, TIME_VAR, forward, false);
+                                            index2varName, TIME_VAR, forward, !IS_LIBRARY_MODE);
     string const forbiddenString = getForbiddenString(T, TIME_VAR);
-    
-//     std::cerr << "init: " << initialString << std::endl;
-//     std::cerr << "inv: " << invString << std::endl;
-//     std::cerr << "flow: " << flowString << std::endl;
-//     std::cerr << "forbidden: " << forbiddenString << std::endl;
-    
-    // create struct with a location
-    location loc;
-    loc.invariant = invString.c_str();
-    loc.flow = flowString.c_str();
-    
-    // convert initial string
-    const char* initial = initialString.c_str();
-    
-    // create struct with output variables
-    output_variables outputs;
-    outputs.size = NUM_VAR + 1;
-    const char** vars = new const char*[NUM_VAR];
-    for (int i = 0; i < NUM_VAR; ++i) {
-        vars[i] = index2varName[i].c_str();
-    }
-    vars[NUM_VAR] = TIME_VAR.c_str();
-    outputs.variables = vars;
-    
-    // create struct with result for SpaceEx
-    spaceex_result result;
-    spaceex_variable_valuation resvals[NUM_VAR + 1];
-    result.variable_results = resvals;
-    
-    // set options
-    /* TODO(christian) How does this "time horizon" option work?
-     * We need to take a bigger number than T, otherwise it can result in an
-     * underapproximation
-     */
-    set_time_horizon(T.rightBound() + 1);
-    // TODO(christian) What should we set here? Parameterize function?
-    set_sampling_time(0.01);
-    
-    // TODO(christian) Currently there is no possibility to pass the forbidden states
-    
-    // run SpaceEx
-    continuous_post(loc, initial, outputs, result);
-    
+
+    //     std::cerr << "init: " << initialString << std::endl;
+    //     std::cerr << "inv: " << invString << std::endl;
+    //     std::cerr << "flow: " << flowString << std::endl;
+    //     std::cerr << "forbidden: " << forbiddenString << std::endl;
+
     // computational error allowed by SpaceEx
     double const ERROR_BOUND = 0.0000000000001;
     
-    // refine intervals wrt. SpaceEx output
-    for (int i = 0; i < result.size; ++i) {
-        spaceex_variable_valuation& var_val = result.variable_results[i];
-//         std::cerr << var_val.variable_name << " == " << var_val.valuation << std::endl;
+    // support function scenario (LGG) related:
+    double const timeHorizon = T.rightBound() + 1;
+    double const samplingTime = 0.01;
+    
+    if (IS_LIBRARY_MODE) { // library mode
+        // create struct with a location
+        location loc;
+        loc.invariant = invString.c_str();
+        loc.flow = flowString.c_str();
         
-        string line = string(var_val.valuation);
+        // convert initial string
+        const char* initial = initialString.c_str();
         
-        // split interval string
-        int comma = line.find(',', 2);
-        int const end = line.find(']', comma + 2);
-        string lower(line.substr(1, comma - 1));
-        ++comma;
-        string upper(line.substr(comma, end - comma));
-        interval const new_x_t = interval(std::stod(lower) - ERROR_BOUND,
-                                          std::stod(upper) + ERROR_BOUND);
+        // create struct with output variables
+        output_variables outputs;
+        outputs.size = NUM_VAR + 1;
+        const char** vars = new const char*[NUM_VAR];
+        for (int i = 0; i < NUM_VAR; ++i) {
+            vars[i] = index2varName[i].c_str();
+        }
+        vars[NUM_VAR] = TIME_VAR.c_str();
+        outputs.variables = vars;
         
-        if (i == NUM_VAR) {
-            // time variable pruning = intersection of old with new interval
-            if (forward) {
-//                 std::cerr << TIME_VAR << ": " << new_x_t << " cap " << T;
-                if (!intersection(new_x_t, T, T)) {
-//                     std::cerr << " = []" << std::endl;
-                    DREAL_LOG_INFO << "ode_solver::simple_ODE_SpaceEx_forward: no intersection for T => UNSAT";
-                    return ODE_result::UNSAT;
-                }
-//                 std::cerr << " = " << T << std::endl;
-            }
-        } else {
-            // state variable pruning = intersection of old with new interval
-            interval & x_t = X_t[i];
+        // create struct with result for SpaceEx
+        spaceex_result result;
+        spaceex_variable_valuation resvals[NUM_VAR + 1];
+        result.variable_results = resvals;
+        
+        // set options
+        /* TODO(christian) How does this "time horizon" option work?
+        * We need to take a bigger number than T, otherwise it can result in an
+        * underapproximation
+        */
+        set_time_horizon(timeHorizon);
+        // TODO(christian) What should we set here? Parameterize function?
+        set_sampling_time(samplingTime);
+        
+        // run SpaceEx
+        continuous_post(loc, initial, outputs, result);
+        
+        // intersect with forbidden states (= time interval T)
+        spaceex_result_value intersection_result;
+        char msg[20];
+        bool is_empty = intersect_with_bad_state(forbiddenString.c_str(), result,
+                                                intersection_result, msg);
+        
+        if (!is_empty) {
+            DREAL_LOG_INFO << "ode_solver::simple_ODE_SpaceEx_general: no intersection in SpaceEx => UNSAT";
+            return ODE_result::UNSAT;
+        }
+        
+        // refine intervals wrt. SpaceEx output
+        for (int i = 0; i < result.size; ++i) {
+            spaceex_variable_valuation& var_val = result.variable_results[i];
+//             std::cerr << var_val.variable_name << " == " << var_val.valuation_char << std::endl;
             
-//             std::cerr << index2varName[i] << ": " << new_x_t << " cap " << x_t;
-            if (!intersection(new_x_t, x_t, x_t)) {
-//                 std::cerr << " = []" << std::endl;
-                DREAL_LOG_INFO << "ode_solver::simple_ODE_SpaceEx_forward: no intersection for X_T => UNSAT";
+            string line = string(var_val.valuation_char);
+            
+            // new interval
+            interval const new_x_t = interval(var_val.lower_bound - ERROR_BOUND,
+                                            var_val.upper_bound + ERROR_BOUND);
+            
+            // find respective variable index
+            string varName(var_val.variable_name);
+            unsigned const j =
+                findVariable(varName, index2varName, TIME_VAR, i, NUM_VAR);
+            
+            // prune
+            if (prune_result(X_t, T, new_x_t, j, forward) == ODE_result::UNSAT) {
                 return ODE_result::UNSAT;
             }
-//             std::cerr << " = " << x_t << std::endl;
         }
-    }
-//     std::cerr << std::endl;
-    
-    // update
-    if (forward) {
-        IVector_to_varlist(X_t, m_t_vars);
-    } else {
-        IVector_to_varlist(X_t, m_0_vars);
-    }
-    return ODE_result::SAT;
-}
-
-/* Christian: new SpaceEx function for pruning in binary mode with communication via files */
-ode_solver::ODE_result ode_solver::simple_ODE_SpaceEx_general_files(IVector const & X_0,
-                    IVector & X_t, interval & T, IVector const & inv, bool const forward) {
-    bool const prune_params_result = prune_params();
-    if (!prune_params_result) {
-        return ODE_result::UNSAT;
-    }
-    
-    // TODO(christian) debugging: additional counter to write new files for each call
-    string const numberString = to_string(++g_SpaceExCalls);
-    
-    string const FILES_PATH = "spaceex/";
-    string const MODEL_FILE_NAME = FILES_PATH + "model" + numberString + ".xml";
-    string const CONFIG_FILE_NAME = FILES_PATH + "config" + numberString + ".cfg";
-    string const OUTPUT_FILE_NAME = FILES_PATH + "output" + numberString + ".txt";
-    string const SCREEN_FILE_NAME = FILES_PATH + "screen" + numberString + ".txt";
-    int const NUM_VAR = X_0.dimension();
-    string const TIME_VAR = m_time->getCar()->getName();
-    
-    // mapping from variable name to ODE
-    string const flow_step = (m_egraph.stepped_flows ? to_string(m_step) + "_" : "");
-    unordered_map<string, Enode *> & flow_map = m_egraph.flow_maps[string("flow_") + flow_step + to_string(m_mode)];
-    
-    // mapping from variable index to name
-    string * const index2varName = new string[NUM_VAR];
-    Enode * var_list = m_int->getCdr()->getCdr()->getCdr()->getCdr();
-    int index = 0;
-    while (!var_list->isEnil()) {
-        string const name = getVarName(var_list);
-        index2varName[index] = name;
+    } else { // binary mode
+        // TODO(christian) debugging: additional counter to write new files for each call
+        string const numberString = to_string(++g_SpaceExCalls);
         
-        // continue in list
-        var_list = var_list->getCdr()->getCdr();
-        ++index;
-    }
-    
-    // strings describing initial states, invariant, flow
-    string const initialString = getInitString(X_0, index2varName, TIME_VAR);
-    string const invString = getInvString(inv, T, index2varName, TIME_VAR, true);
-    string const flowString = getFlowString(flow_map, m_int->getCdr()->getCdr()->getCdr()->getCdr(),
-                                            index2varName, TIME_VAR, forward, true);
-    string const forbiddenString = getForbiddenString(T, TIME_VAR);
-    
-//     std::cerr << "init: " << initialString << std::endl;
-//     std::cerr << "inv: " << invString << std::endl;
-//     std::cerr << "flow: " << flowString << std::endl;
-//     std::cerr << "forbidden: " << forbiddenString << std::endl;
-    
-    // Christian: For the moment, write a SpaceEx model file
-    std::ofstream out(MODEL_FILE_NAME);
-    out << "<?xml version=\"1.0\" encoding=\"utf-8\"?>" << endl <<
-        "<sspaceex xmlns=\"http://www-verimag.imag.fr/xml-namespaces/sspaceex\" version=\"0.2\" math=\"SpaceEx\">" << endl <<
-        "  <component id=\"system\">" << endl;
-    for (int i = 0; i < NUM_VAR; ++i) {
-        out << "    <param name=\"" << index2varName[i] <<
-                "\" type=\"real\" local=\"true\" d1=\"1\" d2=\"1\" dynamics=\"any\" />\"" << endl;
-    }
-    out << "    <param name=\"" << TIME_VAR <<
-        "\" type=\"real\" local=\"true\" d1=\"1\" d2=\"1\" dynamics=\"any\" />\"" << endl;
-    out << "    <location id=\"1\" name=\"loc1\" x=\"300.0\" y=\"300.0\" width=\"300.0\" height=\"300.0\">" << endl <<
-        "      <invariant>" << invString << "</invariant>" << endl <<
-        "      <flow>" << flowString << "</flow>" << endl <<
-        "    </location>" << endl <<
-        "  </component>" << endl <<
-        "</sspaceex>" << endl;
-    out.close();
-    // end of SpaceEx model file
-
-    // Christian: For the moment, write a SpaceEx config file
-    out.open(CONFIG_FILE_NAME);
-    // TODO(christian: same question as for library mode: How to set parameters?)
-    out << "system = system" << endl <<
-        "initially = " << initialString << endl <<
-        "forbidden = " << forbiddenString << endl <<
-        "scenario = supp" << endl <<
-        "directions = box" << endl <<
-        "iter-max = 1" << endl <<
-        "sampling-time = " << 0.01 << endl <<
-        "time-horizon = " << to_string(T.rightBound() + 1) << endl <<
-        "rel-err = 1e-12" << endl <<
-        "abs-err = 1e-15" << endl <<
-        "output-format = INTV" << endl;
-    
-    out << "output-variables = \"";
-    for (int i = 0; i < NUM_VAR; ++i) {
-        out << index2varName[i] << ",";
-    }
-    out << TIME_VAR << "\"" << endl;
-    
-    out.close();
-    // end of SpaceEx config file
-    
-    // call SpaceEx
-    // TODO(christian) How should we set the path to SpaceEx?
-    string callString = "spaceex -m " + MODEL_FILE_NAME +
-                        " -g " + CONFIG_FILE_NAME +
-                        " -o " + OUTPUT_FILE_NAME +
-                        " -v D7 > " + SCREEN_FILE_NAME;
-    system(callString.c_str());
-    
-    // open and parse output file
-    std::ifstream in(OUTPUT_FILE_NAME);
-    string line;
-    int i = -3;
-    double const ERROR_BOUND = 0.0000000000001;
-    while (getline (in, line)) {
-        ++i;
-        if (i < 0) {
-            continue;
+        string const FILES_PATH = "spaceex/";
+        string const MODEL_FILE_NAME = FILES_PATH + "model" + numberString + ".xml";
+        string const CONFIG_FILE_NAME = FILES_PATH + "config" + numberString + ".cfg";
+        string const OUTPUT_FILE_NAME = FILES_PATH + "output" + numberString + ".txt";
+        string const SCREEN_FILE_NAME = FILES_PATH + "screen" + numberString + ".txt";
+        
+        // write a SpaceEx model file
+        std::ofstream out(MODEL_FILE_NAME);
+        out << "<?xml version=\"1.0\" encoding=\"utf-8\"?>" << endl <<
+            "<sspaceex xmlns=\"http://www-verimag.imag.fr/xml-namespaces/sspaceex\" version=\"0.2\" math=\"SpaceEx\">" << endl <<
+            "  <component id=\"system\">" << endl;
+        for (int i = 0; i < NUM_VAR; ++i) {
+            out << "    <param name=\"" << index2varName[i] <<
+                    "\" type=\"real\" local=\"true\" d1=\"1\" d2=\"1\" dynamics=\"any\" />\"" << endl;
         }
-        // one iteration per variable; current = xi
+        out << "    <param name=\"" << TIME_VAR <<
+            "\" type=\"real\" local=\"true\" d1=\"1\" d2=\"1\" dynamics=\"any\" />\"" << endl;
+        out << "    <location id=\"1\" name=\"loc1\" x=\"300.0\" y=\"300.0\" width=\"300.0\" height=\"300.0\">" << endl <<
+            "      <invariant>" << invString << "</invariant>" << endl <<
+            "      <flow>" << flowString << "</flow>" << endl <<
+            "    </location>" << endl <<
+            "  </component>" << endl <<
+            "</sspaceex>" << endl;
+        out.close();
+
+        // write a SpaceEx config file
+        out.open(CONFIG_FILE_NAME);
+        out << "system = system" << endl <<
+            "initially = " << initialString << endl <<
+            "forbidden = " << forbiddenString << endl <<
+            "scenario = supp" << endl <<
+            "directions = box" << endl <<
+            "iter-max = 1" << endl <<
+            "sampling-time = " << to_string(samplingTime) << endl <<
+            "time-horizon = " << to_string(timeHorizon) << endl <<
+            "rel-err = 1e-12" << endl <<
+            "abs-err = 1e-15" << endl <<
+            "output-format = INTV" << endl;
         
-        // split interval string
-        int const start = line.find('[', 10) + 1;
-        int comma = line.find(',', start + 1);
-        int const end = line.find(']', comma + 2);
-        string lower(line.substr(start, comma - start));
-        ++comma;
-        string upper(line.substr(comma, end - comma));
-        interval const new_x_t = interval(std::stod(lower) - ERROR_BOUND,
-                                          std::stod(upper) + ERROR_BOUND);
+        out << "output-variables = \"";
+        for (int i = 0; i < NUM_VAR; ++i) {
+            out << index2varName[i] << ",";
+        }
+        out << TIME_VAR << "\"" << endl;
+        out.close();
         
-        if (i == NUM_VAR) {
-            // time variable pruning = intersection of old with new interval
-//             std::cerr << TIME_VAR << " == [" << lower << ", " << upper << "]" << std::endl;
-            if (forward) {
-//                 std::cerr << TIME_VAR << ": " << new_x_t << " cap " << T;
-                if (!intersection(new_x_t, T, T)) {
-//                     std::cerr << " = []" << std::endl;
-                    DREAL_LOG_INFO << "ode_solver::simple_ODE_SpaceEx_forward: no intersection for T => UNSAT";
-                    return ODE_result::UNSAT;
-                }
-//                 std::cerr << " = " << T << std::endl;
+        // call SpaceEx
+        // TODO(christian) How should we set the path to SpaceEx?
+        string callString = "spaceex -m " + MODEL_FILE_NAME +
+                            " -g " + CONFIG_FILE_NAME +
+                            " -o " + OUTPUT_FILE_NAME +
+                            " -v D7 > " + SCREEN_FILE_NAME;
+        system(callString.c_str());
+        
+        // open and parse output file
+        std::ifstream in(OUTPUT_FILE_NAME);
+        string line;
+        int i = -3;
+        while (getline (in, line)) {
+            ++i;
+            if (i < 0) {
+                continue;
             }
-            break;
-        } else {
-//             std::cerr << index2varName[i] << " == [" << lower << ", " << upper << "]" << std::endl;
-            // state variable pruning = intersection of old with new interval
-            interval & x_t = X_t[i];
+            // one iteration per variable
             
-//             std::cerr << index2varName[i] << ": " << new_x_t << " cap " << x_t;
-            if (!intersection(new_x_t, x_t, x_t)) {
-//                 std::cerr << " = []" << std::endl;
-                DREAL_LOG_INFO << "ode_solver::simple_ODE_SpaceEx_forward: no intersection for X_T => UNSAT";
+            // split interval string
+            
+            int const varEnd = line.find(':', 8);
+            int const start = varEnd + 3;
+            int comma = line.find(',', start + 1);
+            int const end = line.find(']', comma + 2);
+            string lower(line.substr(start, comma - start));
+            ++comma;
+            string upper(line.substr(comma, end - comma));
+            interval const new_x_t = interval(std::stod(lower) - ERROR_BOUND,
+                                            std::stod(upper) + ERROR_BOUND);
+            
+            // find respective variable index
+            string varName = line.substr(7, varEnd - 7);
+            unsigned const j =
+                findVariable(varName, index2varName, TIME_VAR, i, NUM_VAR);
+            
+            // prune
+            if (prune_result(X_t, T, new_x_t, j, forward) == ODE_result::UNSAT) {
                 return ODE_result::UNSAT;
             }
-//             std::cerr << " = " << x_t << std::endl;
+            
+            // last variable ends the loop
+            if (i == NUM_VAR) {
+                break;
+            }
         }
+        in.close();
     }
-    in.close();
 //     std::cerr << std::endl;
-    
+
     // update
     if (forward) {
         IVector_to_varlist(X_t, m_t_vars);
@@ -1441,12 +1376,79 @@ ode_solver::ODE_result ode_solver::simple_ODE_FlowStar_forward(IVector const & X
     
     
     // TODO(christian) missing: read in FlowStar output and prune
+    return ODE_result::UNSAT;
 }
 
 /* Christian: new FlowStar function for backward pruning */
 ode_solver::ODE_result ode_solver::simple_ODE_FlowStar_backward(IVector const & X_0,
             IVector & X_t, interval & T, IVector const & inv) {
     // TODO(christian) Write this function
+}
+
+/* Christian: new function to find a given 
+variable in the variables array */
+unsigned ode_solver::findVariable(string & name, string * const index2varName,
+                                  string const & TIME_VAR, int const IDX,
+                                  int const NUM_VAR) {
+    /*
+     * There is an input index to give a priority (often the output order is the
+     * input order). We check this first to possibly skip the full search.
+     * However, it is not guaranteed that this always succeeds.
+     * 
+     * We know the input index is always in the interval [0, NUM_VAR].
+     */
+    if (IDX < NUM_VAR) {
+        if (! name.compare(index2varName[IDX])) {
+            return IDX;
+        }
+    } else {
+        if (! name.compare(TIME_VAR)) {
+            return IDX;
+        }
+    }
+    
+    // variable index is not the one from the input order, so find it
+    for (int i = 0; i < NUM_VAR; ++i) {
+        if (! name.compare(index2varName[i])) {
+            return i;
+        }
+    }
+    if (! name.compare(TIME_VAR)) {
+        return NUM_VAR;
+    }
+    
+    // NOTE: this should not happen
+    std::cerr << "ERROR" << std::endl;
+    return -1;
+}
+
+/* Christian: new function for actually pruning, given a result from an external solver */
+ode_solver::ODE_result ode_solver::prune_result(IVector & X, interval & T,
+                interval const & new_x, unsigned const i, bool const forward) {
+    if (i == X.dimension()) {
+        // time variable pruning = intersection of old with new interval
+        if (forward) {
+//             std::cerr << TIME_VAR << ": " << new_x_t << " cap " << T;
+            if (!intersection(new_x, T, T)) {
+//                 std::cerr << " = []" << std::endl;
+                DREAL_LOG_INFO << "ode_solver::prune_result: no intersection for T => UNSAT";
+                return ODE_result::UNSAT;
+            }
+//             std::cerr << " = " << T << std::endl;
+        }
+    } else {
+        // state variable pruning = intersection of old with new interval
+        interval & x = X[i];
+        
+//         std::cerr << index2varName[i] << ": " << new_x_t << " cap " << x_t;
+        if (!intersection(new_x, x, x)) {
+//             std::cerr << " = []" << std::endl;
+            DREAL_LOG_INFO << "ode_solver::prune_result: no intersection for X => UNSAT";
+            return ODE_result::UNSAT;
+        }
+//         std::cerr << " = " << x_t << std::endl;
+    }
+    return ODE_result::SAT;
 }
 
 /* Christian: new function for printing initial states string */

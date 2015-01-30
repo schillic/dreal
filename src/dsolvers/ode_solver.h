@@ -152,11 +152,6 @@ private:
                                   capd::interval & T,
                                   capd::IVector const & inv,
                                   bool const forward);
-    ODE_result simple_ODE_SpaceEx_general_files(capd::IVector const & X_0,
-                                  capd::IVector & X_t,
-                                  capd::interval & T,
-                                  capd::IVector const & inv,
-                                  bool const forward);
     ODE_result simple_ODE_FlowStar_forward(capd::IVector const & X_0,
                                   capd::IVector & X_t,
                                   capd::interval & T,
@@ -165,7 +160,13 @@ private:
                                   capd::IVector & X_t,
                                   capd::interval & T,
                                   capd::IVector const & inv);
-    std::string getInitString(capd::IVector const & X_0,string * const index2varName,
+    unsigned findVariable(std::string & name, string * const index2varName,
+                          std::string const & TIME_VAR, int const IDX,
+                          int const NUM_VAR);
+    ODE_result prune_result(capd::IVector & X, capd::interval & T,
+                            capd::interval const & new_x, unsigned const i,
+                            bool const forward);
+    std::string getInitString(capd::IVector const & X_0, string * const index2varName,
                               string const timeString);
     std::string getInvString(capd::IVector const & inv, capd::interval const & T,
                              string * const index2varName, string const timeString,
