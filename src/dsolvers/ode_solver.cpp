@@ -1424,6 +1424,10 @@ ode_solver::ODE_result ode_solver::simple_ODE_FlowStar_forward(IVector const & X
     
     // union interval
     interval intervals[NUM_VAR];
+    for (int i = 0; i < NUM_VAR; ++i) {
+        intervals[i] = X_t[i];
+//         std::cerr << index2varName[i] << ": " << intervals[i] << std::endl;
+    }
     
     // open and parse output file
     std::ifstream in("intervals/" + OUTPUT_FILE_NAME + ".flow");
