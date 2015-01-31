@@ -1141,11 +1141,11 @@ ode_solver::ODE_result ode_solver::simple_ODE_SpaceEx_general(IVector const & X_
     }
     
     // strings describing initial states, invariant, flow, and forbidden states
-    string const initialString = getInitString(X_0, index2varName, TIME_VAR);
-    string const invString = getInvString(inv, T, index2varName, TIME_VAR, !IS_LIBRARY_MODE);
-    string const flowString = getFlowString(flow_map, m_int->getCdr()->getCdr()->getCdr()->getCdr(),
+    string const initialString = getInitStringSpaceEx(X_0, index2varName, TIME_VAR);
+    string const invString = getInvStringSpaceEx(inv, T, index2varName, TIME_VAR, !IS_LIBRARY_MODE);
+    string const flowString = getFlowStringSpaceEx(flow_map, m_int->getCdr()->getCdr()->getCdr()->getCdr(),
                                             index2varName, TIME_VAR, forward, !IS_LIBRARY_MODE);
-    string const forbiddenString = getForbiddenString(T, TIME_VAR);
+    string const forbiddenString = getForbiddenStringSpaceEx(T, TIME_VAR);
 
     //     std::cerr << "init: " << initialString << std::endl;
     //     std::cerr << "inv: " << invString << std::endl;
@@ -1171,7 +1171,7 @@ ode_solver::ODE_result ode_solver::simple_ODE_SpaceEx_general(IVector const & X_
         // create struct with output variables
         output_variables outputs;
         outputs.size = NUM_VAR + 1;
-        const char** vars = new const char*[NUM_VAR];
+        const char** vars = new const char*[NUM_VAR + 1];
         for (int i = 0; i < NUM_VAR; ++i) {
             vars[i] = index2varName[i].c_str();
         }
@@ -1197,33 +1197,63 @@ ode_solver::ODE_result ode_solver::simple_ODE_SpaceEx_general(IVector const & X_
         
         // intersect with forbidden states (= time interval T)
         spaceex_result_value intersection_result;
-        char msg[20];
-        bool is_empty = intersect_with_bad_state(forbiddenString.c_str(), result,
-                                                intersection_result, msg);
         
-        if (!is_empty) {
+        constraints_result c_res;
+        char msg[20];
+        spaceex_tribool is_not_empty = intersect_with_bad_state(forbiddenString.c_str(),
+                                            result, intersection_result, msg, c_res);
+        
+        if (is_not_empty.unknown || (intersection_result != OK)) {
+            DREAL_LOG_INFO << "ode_solver::simple_ODE_SpaceEx_general: unknown result due to SpaceEx";
+            return ODE_result::EXCEPTION;
+        } else if (! is_not_empty) {
             DREAL_LOG_INFO << "ode_solver::simple_ODE_SpaceEx_general: no intersection in SpaceEx => UNSAT";
             return ODE_result::UNSAT;
         }
         
-        // refine intervals wrt. SpaceEx output
-        for (int i = 0; i < result.size; ++i) {
-            spaceex_variable_valuation& var_val = result.variable_results[i];
-//             std::cerr << var_val.variable_name << " == " << var_val.valuation_char << std::endl;
-            
-            string line = string(var_val.valuation_char);
-            
-            // new interval
-            interval const new_x_t = interval(var_val.lower_bound - ERROR_BOUND,
-                                            var_val.upper_bound + ERROR_BOUND);
+        // convert SpaceEx constraints to intervals (use old intervals)
+        interval intervals[NUM_VAR + 1];
+        for (int i = 0; i < NUM_VAR; ++i) {
+            intervals[i] = X_t[i];
+        }
+        intervals[NUM_VAR] = T;
+        for (unsigned i = 0; i < c_res.size; ++i) {
+            linear_constraint lin_constraint = c_res.constraints[i];
+//             std::cerr << lin_constraint.variable_name << " == " <<
+//                 lin_constraint.valuation_char << std::endl;
             
             // find respective variable index
-            string varName(var_val.variable_name);
+            string varName(lin_constraint.variable_name);
             unsigned const j =
-                findVariable(varName, index2varName, TIME_VAR, i, NUM_VAR);
+                findVariable(varName, index2varName, TIME_VAR, 0, NUM_VAR);
+            
+            switch (lin_constraint.sign) {
+                case SIGN_GT: // x > c
+                case SIGN_GE: // x >= c
+                    intervals[j].setLeftBound(lin_constraint.value);
+                    break;
+                case SIGN_LT: // x < c
+                case SIGN_LE: // x <= c
+                    intervals[j].setRightBound(lin_constraint.value);
+                    break;
+                case SIGN_EQ: // x == c
+                    intervals[j].setLeftBound(lin_constraint.value);
+                    intervals[j].setRightBound(lin_constraint.value);
+                    break;
+                default:
+                    DREAL_LOG_INFO << "ode_solver::simple_ODE_SpaceEx_general: Unknown sign";
+                    return ODE_result::EXCEPTION;
+            }
+        }
+        
+        // refine intervals wrt. SpaceEx output
+        for (int i = 0; i <= NUM_VAR; ++i) {
+            // new interval
+            interval const new_x_t = interval(intervals[i].leftBound() - ERROR_BOUND,
+                                              intervals[i].rightBound() + ERROR_BOUND);
             
             // prune
-            if (prune_result(X_t, T, new_x_t, j, forward) == ODE_result::UNSAT) {
+            if (prune_result(X_t, T, new_x_t, i, forward) == ODE_result::UNSAT) {
                 return ODE_result::UNSAT;
             }
         }
@@ -1371,13 +1401,14 @@ ode_solver::ODE_result ode_solver::simple_ODE_FlowStar_forward(IVector const & X
     
     // input string for FlowStar
     string const flowStarString =
-            getFlowStarString(X_0, T, flow_map, m_int->getCdr()->getCdr()->getCdr()->getCdr(),
+            getStringFlowStar(X_0, T, inv, flow_map,
+                              m_int->getCdr()->getCdr()->getCdr()->getCdr(),
                               index2varName, true, OUTPUT_FILE_NAME);
     
     // run FlowStar
     // TODO(christian) make this platform independent
     string callString = "flowstar <<< " + flowStarString + " > /dev/null";
-//     std::cerr << callString << std::endl;
+    std::cerr << callString << std::endl;
     system(callString.c_str());
     
     // computational error allowed by FlowStar
@@ -1443,6 +1474,7 @@ ode_solver::ODE_result ode_solver::simple_ODE_FlowStar_forward(IVector const & X
 ode_solver::ODE_result ode_solver::simple_ODE_FlowStar_backward(IVector const & X_0,
             IVector & X_t, interval & T, IVector const & inv) {
     // TODO(christian) Write this function
+    return ODE_result::EXCEPTION;
 }
 
 /* Christian: new function to find a given 
@@ -1478,7 +1510,7 @@ unsigned ode_solver::findVariable(string & name, string * const index2varName,
     }
     
     // NOTE: this should not happen
-    std::cerr << "ERROR" << std::endl;
+    DREAL_LOG_INFO << "ode_solver::findVariable: The variable does not exist.";
     return -1;
 }
 
@@ -1511,8 +1543,8 @@ ode_solver::ODE_result ode_solver::prune_result(IVector & X, interval & T,
     return ODE_result::SAT;
 }
 
-/* Christian: new function for printing initial states string */
-string ode_solver::getInitString(IVector const & X_0, string * const index2varName,
+/* Christian: new function for printing SpaceEx initial states string */
+string ode_solver::getInitStringSpaceEx(IVector const & X_0, string * const index2varName,
                                  string const timeString) {
     string str = "";
     
@@ -1534,8 +1566,8 @@ string ode_solver::getInitString(IVector const & X_0, string * const index2varNa
     return str;
 }
 
-/* Christian: new function for printing invariant string */
-string ode_solver::getInvString(IVector const & inv, interval const & T,
+/* Christian: new function for printing SpaceEx invariant string */
+string ode_solver::getInvStringSpaceEx(IVector const & inv, interval const & T,
                                 string * const index2varName, string const timeString,
                                 bool const FILE) {
     string const AND = (FILE ? " &amp; " : " & ");
@@ -1560,8 +1592,8 @@ string ode_solver::getInvString(IVector const & inv, interval const & T,
     return str;
 }
 
-/* Christian: new function for printing flow string */
-string ode_solver::getFlowString(unordered_map<string, Enode *> & flow_map, Enode * var_list,
+/* Christian: new function for printing SpaceEx flow string */
+string ode_solver::getFlowStringSpaceEx(unordered_map<string, Enode *> & flow_map, Enode * var_list,
                                  string * const index2varName, string const timeString,
                                  bool const forward_dynamics, bool const FILE) {
     string const AND = (FILE ? " &amp; " : " & ");
@@ -1598,7 +1630,8 @@ string ode_solver::getFlowString(unordered_map<string, Enode *> & flow_map, Enod
     return str;
 }
 
-string ode_solver::getForbiddenString(interval const & T, string const timeString) {
+/* Christian: new function for printing SpaceEx forbidden states string */
+string ode_solver::getForbiddenStringSpaceEx(interval const & T, string const timeString) {
     return timeString + " >= " + to_string(T.leftBound());
 }
 
@@ -1616,9 +1649,11 @@ string ode_solver::getVarName(Enode * var_list) {
     return name_prefix;
 }
 
-/* Christian: new function for printing initial states string for Flow* */
-string ode_solver::getFlowStarString(IVector const & X_0, interval const & T,
-                                     unordered_map<string, Enode *> & flow_map, Enode * var_list,
+/* Christian: new function for printing FlowStar initial states string */
+string ode_solver::getStringFlowStar(IVector const & X_0, interval const & T,
+                                     IVector const & inv,
+                                     unordered_map<string, Enode *> & flow_map,
+                                     Enode * var_list,
                                      string * const index2varName,
                                      bool const forward_dynamics,
                                      string const outputFileName) {
@@ -1634,7 +1669,7 @@ string ode_solver::getFlowStarString(IVector const & X_0, interval const & T,
     int const opt_precision = 53;
     
     // declare state variables
-    string str = "\"continuous reachability {\nstate var ";
+    string str = "\"hybrid reachability {\nstate var ";
     for (unsigned i = 0; i < X_0.dimension(); i++) {
         if (i > 0) {
              str += ",";
@@ -1676,11 +1711,14 @@ string ode_solver::getFlowStarString(IVector const & X_0, interval const & T,
     str += "\nprecision " + to_string(opt_precision);
     // - output file
     str += "\noutput " + outputFileName;
+    // jumps (none)
+    str += "\nmax jumps 0";
     // - printing
     str += "\nprint off";
     str += "\n}\n";
     
     // define flow
+    str += "modes { mode1 {\n";
     if (opt_ode_mode == 1) {
         str += "poly ode 1";
     } else if (opt_ode_mode == 2) {
@@ -1709,6 +1747,17 @@ string ode_solver::getFlowStarString(IVector const & X_0, interval const & T,
         ++i;
     }
     
+    // define invariant
+    str += "}\ninv {";
+//     for (unsigned i = 0; i < inv.dimension(); ++i) {
+//         interval const & x = inv[i];
+//         str += "\n(" + to_string(x.leftBound()) + " <= " +
+//                index2varName[i] + " <= " + to_string(x.rightBound()) + ")";
+//     }
+    
+    // define jumps (none)
+    str += "\n}\n}}\njumps {";
+    
     // define initial states
     str += "}\ninit {\n";
     for (unsigned i = 0; i < X_0.dimension(); i++) {
@@ -1717,8 +1766,6 @@ string ode_solver::getFlowStarString(IVector const & X_0, interval const & T,
                to_string(x_0.rightBound()) + "]\n";
     }
     str += "}\n}\"";
-    
-//     std::cerr << "Output for FlowStar:" << std::endl << str << std::endl;
     
     return str;
 }

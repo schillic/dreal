@@ -166,17 +166,20 @@ private:
     ODE_result prune_result(capd::IVector & X, capd::interval & T,
                             capd::interval const & new_x, unsigned const i,
                             bool const forward);
-    std::string getInitString(capd::IVector const & X_0, string * const index2varName,
-                              string const timeString);
-    std::string getInvString(capd::IVector const & inv, capd::interval const & T,
-                             string * const index2varName, string const timeString,
-                             bool const FILE);
-    std::string getFlowString(std::unordered_map<string, Enode *> & flow_map,
-                              Enode * var_list, string * const index2varName,
-                              string const TIME_VAR, bool const forward_dynamics,
-                              bool const FILE);
-    std::string getForbiddenString(capd::interval const & T, string const timeString);
-    std::string getFlowStarString(capd::IVector const & X_0, capd::interval const & T,
+    std::string getInitStringSpaceEx(capd::IVector const & X_0,
+                                     string * const index2varName,
+                                     string const timeString);
+    std::string getInvStringSpaceEx(capd::IVector const & inv, capd::interval const & T,
+                                    string * const index2varName, string const timeString,
+                                    bool const FILE);
+    std::string getFlowStringSpaceEx(std::unordered_map<string, Enode *> & flow_map,
+                                     Enode * var_list, string * const index2varName,
+                                     string const TIME_VAR, bool const forward_dynamics,
+                                     bool const FILE);
+    std::string getForbiddenStringSpaceEx(capd::interval const & T,
+                                          string const timeString);
+    std::string getStringFlowStar(capd::IVector const & X_0, capd::interval const & T,
+                                  capd::IVector const & inv,
                                   std::unordered_map<string, Enode *> & flow_map,
                                   Enode * var_list, std::string * const index2varName,
                                   bool const forward_dynamics,
