@@ -1198,10 +1198,10 @@ ode_solver::ODE_result ode_solver::simple_ODE_SpaceEx_general(IVector const & X_
         // intersect with forbidden states (= time interval T)
         spaceex_result_value intersection_result;
         
-        constraints_result c_res;
+        constraints_result intersection;
         char msg[20];
         spaceex_tribool is_not_empty = intersect_with_bad_state(forbiddenString.c_str(),
-                                            result, intersection_result, msg, c_res);
+                                            result, intersection_result, msg, intersection);
         
         if (is_not_empty.unknown || (intersection_result != OK)) {
             DREAL_LOG_INFO << "ode_solver::simple_ODE_SpaceEx_general: unknown result due to SpaceEx";
@@ -1215,17 +1215,19 @@ ode_solver::ODE_result ode_solver::simple_ODE_SpaceEx_general(IVector const & X_
         interval intervals[NUM_VAR + 1];
         for (int i = 0; i < NUM_VAR; ++i) {
             intervals[i] = X_t[i];
+//             std::cerr << index2varName[i] << ": " << intervals[i] << std::endl;
         }
+//         std::cerr << TIME_VAR << ": " << T << std::endl;
         intervals[NUM_VAR] = T;
-        for (unsigned i = 0; i < c_res.size; ++i) {
-            linear_constraint lin_constraint = c_res.constraints[i];
-//             std::cerr << lin_constraint.variable_name << " == " <<
-//                 lin_constraint.valuation_char << std::endl;
+        for (unsigned i = 0; i < intersection.size; ++i) {
+            linear_constraint lin_constraint = intersection.constraints[i];
+//             std::cerr << lin_constraint.valuation_char << std::endl;
             
             // find respective variable index
             string varName(lin_constraint.variable_name);
+            const int IDX = (i % 2 == 0 ? i / 2 : (i-1) / 2);
             unsigned const j =
-                findVariable(varName, index2varName, TIME_VAR, 0, NUM_VAR);
+                findVariable(varName, index2varName, TIME_VAR, IDX, NUM_VAR);
             
             switch (lin_constraint.sign) {
                 case SIGN_GT: // x > c
@@ -1251,6 +1253,12 @@ ode_solver::ODE_result ode_solver::simple_ODE_SpaceEx_general(IVector const & X_
             // new interval
             interval const new_x_t = interval(intervals[i].leftBound() - ERROR_BOUND,
                                               intervals[i].rightBound() + ERROR_BOUND);
+            
+//             if (i == NUM_VAR) {
+//                 std::cerr << TIME_VAR << " (new): " << new_x_t << std::endl;
+//             } else {
+//                 std::cerr << index2varName[i] << " (new): " << new_x_t << std::endl;
+//             }
             
             // prune
             if (prune_result(X_t, T, new_x_t, i, forward) == ODE_result::UNSAT) {
@@ -1500,6 +1508,7 @@ unsigned ode_solver::findVariable(string & name, string * const index2varName,
     }
     
     // variable index is not the one from the input order, so find it
+//     std::cerr << "variable was not found at first guess" << std::endl;
     for (int i = 0; i < NUM_VAR; ++i) {
         if (! name.compare(index2varName[i])) {
             return i;
@@ -1520,25 +1529,19 @@ ode_solver::ODE_result ode_solver::prune_result(IVector & X, interval & T,
     if (i == X.dimension()) {
         // time variable pruning = intersection of old with new interval
         if (forward) {
-//             std::cerr << TIME_VAR << ": " << new_x_t << " cap " << T;
             if (!intersection(new_x, T, T)) {
-//                 std::cerr << " = []" << std::endl;
                 DREAL_LOG_INFO << "ode_solver::prune_result: no intersection for T => UNSAT";
                 return ODE_result::UNSAT;
             }
-//             std::cerr << " = " << T << std::endl;
         }
     } else {
         // state variable pruning = intersection of old with new interval
         interval & x = X[i];
         
-//         std::cerr << index2varName[i] << ": " << new_x_t << " cap " << x_t;
         if (!intersection(new_x, x, x)) {
-//             std::cerr << " = []" << std::endl;
             DREAL_LOG_INFO << "ode_solver::prune_result: no intersection for X => UNSAT";
             return ODE_result::UNSAT;
         }
-//         std::cerr << " = " << x_t << std::endl;
     }
     return ODE_result::SAT;
 }
