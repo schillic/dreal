@@ -498,9 +498,9 @@ ode_solver::ODE_result ode_solver::simple_ODE(rp_box b, bool forward) {
     
     // Christian: use new pruning operators
     bool const USE_SPACEEX_FORWARD = true;
-    bool const USE_FLOWSTAR_FORWARD = !USE_SPACEEX_FORWARD && false;
+    bool const USE_FLOWSTAR_FORWARD = !USE_SPACEEX_FORWARD && true;
     bool const USE_SPACEEX_BACKWARD = true;
-    bool const USE_FLOWSTAR_BACKWARD = !USE_SPACEEX_BACKWARD && false;
+    bool const USE_FLOWSTAR_BACKWARD = !USE_SPACEEX_BACKWARD && true;
 //     std::cerr << "--- new round ---" << std::endl;
 
     if (forward) {
@@ -1416,19 +1416,19 @@ ode_solver::ODE_result ode_solver::simple_ODE_FlowStar_forward(IVector const & X
     // run FlowStar
     // TODO(christian) make this platform independent
     string callString = "flowstar <<< " + flowStarString + " > /dev/null";
-    std::cerr << callString << std::endl;
+//     std::cerr << callString << std::endl;
     system(callString.c_str());
     
-    // computational error allowed by FlowStar
-    double const ERROR_BOUND = 0.0000000000001;
-    
     // TODO(christian) this should be replaced by a dynamic condition checked in the loop (but how?)
-    bool IS_INTERESTING_FLOWPIPE = false;
+    bool IS_INTERESTING_FLOWPIPE = true;
+    
+    // union interval
+    interval intervals[NUM_VAR];
     
     // open and parse output file
     std::ifstream in("intervals/" + OUTPUT_FILE_NAME + ".flow");
     string line;
-    int i = -2;
+    int i = -4;
     while (getline(in, line)) {
         ++i;
         if (i < 0) {
@@ -1441,26 +1441,37 @@ ode_solver::ODE_result ode_solver::simple_ODE_FlowStar_forward(IVector const & X
             continue;
         }
         
+        // terminate when an empty line was found
+        if (! line.length()) {
+            break;
+        }
+        
         // for one flowpipe get the values of variable xi
         int const varEnd = line.find(':', 1);
         int const start = varEnd + 3;
-        int comma = line.find(',', start + 1);
-        int const end = line.find(']', comma + 2);
-        string lower(line.substr(start, comma - start));
-        ++comma;
-        string upper(line.substr(comma, end - comma));
-        interval const new_x_t = interval(std::stod(lower) - ERROR_BOUND,
-                                        std::stod(upper) + ERROR_BOUND);
+        int comma = line.find(',', start + 2);
+        int const end = line.find(']', comma + 3);
+        string lower(line.substr(start, comma - start - 1));
+        string upper(line.substr(comma + 2, end - comma - 2));
+        
+        double const lowerD = std::stod(lower); // - ERROR_BOUND;
+        double const upperD = std::stod(upper); // + ERROR_BOUND;
         
         string varName = line.substr(0, varEnd);
         unsigned const j = findVariable(varName, index2varName, "", i, NUM_VAR);
-//         std::cerr << varName << ": [" << lower << " | " << upper << "]" << std::endl;
         
-        // prune
-        if (prune_result(X_t, T, new_x_t, j, forward) == ODE_result::UNSAT) {
-            in.close();
-            return ODE_result::UNSAT;
+        interval & unionIntv = intervals[j];
+//         std::cerr << varName << ": [" << lowerD << ", " << upperD << "]" << std::endl;
+//         std::cerr << "old: " << unionIntv << std::endl;
+        if (lowerD < unionIntv.leftBound()) {
+//             std::cerr << "refining lower bound" << std::endl;
+            unionIntv.setLeftBound(lowerD);
         }
+        if (upperD > unionIntv.rightBound()) {
+//             std::cerr << "refining upper bound" << std::endl;
+            unionIntv.setRightBound(upperD);
+        }
+//         std::cerr << "new: " << unionIntv << std::endl;
         
         // skip over remaining lines after last variable
         if (i == NUM_VAR - 1) {
@@ -1468,6 +1479,17 @@ ode_solver::ODE_result ode_solver::simple_ODE_FlowStar_forward(IVector const & X
         }
     }
     in.close();
+    
+    // prune intervals
+    for (int i = 0; i < NUM_VAR; ++i) {
+//         std::cerr << "final " + index2varName[i] + ": " << intervals[i] << std::endl;
+        interval const new_x_t = intervals[i];
+        
+        // prune
+        if (prune_result(X_t, T, new_x_t, i, forward) == ODE_result::UNSAT) {
+            return ODE_result::UNSAT;
+        }
+    }
     
     // update
     if (forward) {
@@ -1652,7 +1674,7 @@ string ode_solver::getVarName(Enode * var_list) {
     return name_prefix;
 }
 
-/* Christian: new function for printing FlowStar initial states string */
+/* Christian: new function for printing FlowStar input string */
 string ode_solver::getStringFlowStar(IVector const & X_0, interval const & T,
                                      IVector const & inv,
                                      unordered_map<string, Enode *> & flow_map,
@@ -1752,23 +1774,24 @@ string ode_solver::getStringFlowStar(IVector const & X_0, interval const & T,
     
     // define invariant
     str += "}\ninv {";
-//     for (unsigned i = 0; i < inv.dimension(); ++i) {
-//         interval const & x = inv[i];
-//         str += "\n(" + to_string(x.leftBound()) + " <= " +
-//                index2varName[i] + " <= " + to_string(x.rightBound()) + ")";
-//     }
+    for (unsigned i = 0; i < inv.dimension(); ++i) {
+        interval const & invI = inv[i];
+        string varName = index2varName[i];
+        str += "\n" + varName + " >= " + to_string(invI.leftBound());
+        str += "\n" + varName + " <= " + to_string(invI.rightBound());
+    }
     
     // define jumps (none)
     str += "\n}\n}}\njumps {";
     
     // define initial states
-    str += "}\ninit {\n";
+    str += "}\ninit { mode1 {\n";
     for (unsigned i = 0; i < X_0.dimension(); i++) {
         interval const & x_0 = X_0[i];
         str += index2varName[i] + " in [" + to_string(x_0.leftBound()) + " , " +
                to_string(x_0.rightBound()) + "]\n";
     }
-    str += "}\n}\"";
+    str += "}}\n}\"";
     
     return str;
 }
