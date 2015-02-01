@@ -1155,9 +1155,16 @@ ode_solver::ODE_result ode_solver::simple_ODE_SpaceEx_general(IVector const & X_
     // computational error allowed by SpaceEx
     double const ERROR_BOUND = 0.0000000000001;
     
-    // support function scenario (LGG) related:
-    double const timeHorizon = T.rightBound() + 1;
+    // - support function scenario (LGG) related parameters: -
+    
+    // size of the time slices
     double const samplingTime = 0.01;
+    
+    /*
+     * maximum time (philosophy: use max. time plus two more time slices to make
+     * sure the last time slice is already violating the invariant)
+     */
+    double const timeHorizon = T.rightBound() + 2 * samplingTime;
     
     if (IS_LIBRARY_MODE) { // library mode
         // create struct with a location
@@ -1184,10 +1191,6 @@ ode_solver::ODE_result ode_solver::simple_ODE_SpaceEx_general(IVector const & X_
         result.variable_results = resvals;
         
         // set options
-        /* TODO(christian) How does this "time horizon" option work?
-        * We need to take a bigger number than T, otherwise it can result in an
-        * underapproximation
-        */
         set_time_horizon(timeHorizon);
         // TODO(christian) What should we set here? Parameterize function?
         set_sampling_time(samplingTime);
